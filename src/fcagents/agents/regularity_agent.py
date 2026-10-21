@@ -11,6 +11,20 @@ class RegularityAgent(BaseAgent):
     task = "Decide whether the time series is sampled at a fixed frequency."
     scope = "Do NOT discuss seasonality or models; only whether the spacing of timestamps is fixed."
 
+    summary = ("Checks whether the timestamps follow a fixed frequency, including calendar frequencies "
+               "(business days, month/quarter/year starts and ends), and flags duplicates, gaps and unsorted data.")
+    runs_when = "After a time column is found."
+    inputs = ("Parsed timestamps of one series",)
+    outputs = ("Status and detected frequency alias", "Coverage and share of timestamps on the grid",
+               "Missing-timestamp count, duplicate count, largest gap", "Spacing statistics (min/median/max delta)")
+    decisions = {
+        "regular": "Every timestamp sits on a fixed grid with no gaps.",
+        "regular_with_gaps": "Fixed grid, but some timestamps are missing.",
+        "irregular": "No fixed grid fits; the Resampling agent runs next.",
+        "insufficient_data": "Fewer than 3 distinct timestamps; the pipeline stops.",
+    }
+    tools = ("tools.frequency.analyze_regularity",)
+
     def run_tools(self, state: PipelineState) -> dict:
         rep = analyze_regularity(state.series.index)
         state.freq = rep["freq"]

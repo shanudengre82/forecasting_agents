@@ -13,6 +13,19 @@ class FrequencyAgent(BaseAgent):
     task = "Name the sampling frequency of a regular time series and its likely seasonal periods."
     scope = "Seasonal periods listed are only candidates to test, not confirmed seasonality."
 
+    summary = ("Names the sampling frequency in plain words and as a pandas alias, lists missing timestamps and "
+               "gap runs, and proposes the seasonal periods later agents should test.")
+    runs_when = "When a fixed frequency is known (detected by Regularity or produced by Resampling)."
+    inputs = ("Series with a known fixed frequency",)
+    outputs = ("Pandas alias and label (e.g. 'h' / hourly)", "Expected vs observed points and coverage",
+               "Longest gap runs and a sample of missing timestamps",
+               "Candidate seasonal periods (e.g. hourly: 24, 168)")
+    decisions = {
+        "<alias>": "The pandas frequency alias, e.g. h, D, B, W-SUN, MS, QS-JAN. The status is a warning if "
+                   "timestamps are missing.",
+    }
+    tools = ("tools.frequency.describe_frequency",)
+
     def run_tools(self, state: PipelineState) -> dict:
         return describe_frequency(state.series.index, state.freq)
 

@@ -51,6 +51,15 @@ class BaseAgent(ABC):
     task: str = ""  # one-line description given to the LLM
     scope: str = ""  # what the LLM must NOT talk about (small models drift into other agents' topics)
 
+    # Catalogue metadata: rendered in the app's "Agents" tab and the README (see fcagents.catalog).
+    summary: str = ""
+    runs_when: str = "Always"
+    inputs: tuple[str, ...] = ()
+    outputs: tuple[str, ...] = ()
+    decisions: dict[str, str] = {}
+    user_controls: tuple[str, ...] = ()
+    tools: tuple[str, ...] = ()
+
     def applies(self, state: PipelineState) -> str | None:
         """Return a reason to skip this agent for the current state, or None to run it."""
         return None

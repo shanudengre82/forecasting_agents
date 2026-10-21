@@ -48,3 +48,13 @@ def test_weekly_on_short_data_warns():
     at.button[0].click().run()
     assert not at.exception
     assert at.warning and "finer frequency" in at.warning[0].value
+
+
+def test_agents_tab_lists_every_agent():
+    from fcagents.orchestrator import PIPELINE
+
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert not at.exception
+    headers = " ".join(h.value for h in at.subheader)
+    for a in PIPELINE:
+        assert a.title in headers

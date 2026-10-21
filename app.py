@@ -13,9 +13,10 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from fcagents.catalog import PRINCIPLE, agent_catalog, pipeline_dot  # noqa: E402
 from fcagents.llm.backend import DEFAULT_MODEL_ID, NullBackend  # noqa: E402
 from fcagents.orchestrator import PIPELINE, run_pipeline  # noqa: E402
-from fcagents.tools.resample import AGGREGATIONS, FILL_METHODS, FREQ_OPTIONS, MIN_POINTS  # noqa: E402
+from fcagents.tools.resample import AGGREGATIONS, FILL_METHODS, FREQ_OPTIONS, MIN_POINTS, MAX_FREQ, MIN_FREQ  # noqa: E402
 from fcagents.tools.time_index import detect_time_column  # noqa: E402
 
 SAMPLES = ROOT / "data" / "samples"
@@ -169,13 +170,34 @@ def render_chart(state, results) -> None:
     st.plotly_chart(fig, width="stretch")
 
 
-def main() -> None:
-    st.title("📈 Forecasting Agents")
-    st.caption("Small-LLM agents that prepare a time series for forecasting. "
-               "Deterministic tools compute the facts → rules decide → the LLM explains.")
-    st.markdown(" → ".join(f"**{a.title}**" for a in PIPELINE) + " → *more agents coming*")
+def agents_tab(llm) -> None:
+    st.markdown(f"**Design principle:** {PRINCIPLE}")
+    st.graphviz_chart(pipeline_dot(), width="stretch")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Agents in pipeline", len(PIPELINE))
+    c2.metric("Resampling range", f"{MIN_FREQ.components.hours}h – {MAX_FREQ.days // 7}W")
+    c3.metric("Min. data points", MIN_POINTS)
+    st.caption(f"LLM backend in use: `{llm.name}`. It explains results only; it never makes a decision.")
 
-    df, key, llm, prefs = sidebar()
+    for a in agent_catalog():
+        with st.container(border=True):
+            st.subheader(f"{a['step']}. {a['title']}")
+            st.write(a["summary"])
+            st.markdown(f"**Runs when:** {a['runs_when']}")
+            left, right = st.columns(2)
+            with left:
+                st.markdown("**Inputs**\n" + "\n".join(f"- {x}" for x in a["inputs"]))
+                st.markdown("**Outputs**\n" + "\n".join(f"- {x}" for x in a["outputs"]))
+            with right:
+                controls = a["user_controls"] or ["None; fully automatic"]
+                st.markdown("**User controls**\n" + "\n".join(f"- {x}" for x in controls))
+                st.markdown("**Tools**\n" + "\n".join(f"- `{x}`" for x in a["tools"]))
+            st.markdown("**Decisions**")
+            st.dataframe(pd.DataFrame(a["decisions"].items(), columns=["decision", "meaning"]),
+                         hide_index=True, width="stretch")
+
+
+def run_tab(df, key, llm, prefs) -> None:
     if df is None:
         st.info("Pick a sample dataset or upload a CSV in the sidebar.")
         return
@@ -201,6 +223,20 @@ def main() -> None:
         for r in results:
             render_result(r)
         render_chart(state, results)
+
+
+def main() -> None:
+    st.title("📈 Forecasting Agents")
+    st.caption("Small-LLM agents that prepare a time series for forecasting. "
+               "Deterministic tools compute the facts → rules decide → the LLM explains.")
+    st.markdown(" → ".join(f"**{a.title}**" for a in PIPELINE) + " → *more agents coming*")
+
+    df, key, llm, prefs = sidebar()
+    run, agents = st.tabs(["▶ Run pipeline", "🧩 Agents"])
+    with run:
+        run_tab(df, key, llm, prefs)
+    with agents:
+        agents_tab(llm)
 
 
 main()

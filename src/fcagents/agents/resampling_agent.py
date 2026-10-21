@@ -19,6 +19,23 @@ class ResamplingAgent(BaseAgent):
     scope = ("Do not invent point counts. Explain the trade-off: finer frequencies give more points but more "
              "empty bins; coarser ones give fewer, denser points.")
 
+    summary = ("Converts irregularly spaced observations into a fixed-frequency series between 1 hour and 1 week, "
+               "using your choice of frequency, aggregation and empty-bin handling.")
+    runs_when = "Only when the Regularity agent says the series is irregular."
+    inputs = ("Irregular series", "Your resampling preferences (sidebar)")
+    outputs = ("Chosen frequency and whether it was yours or auto-recommended",
+               "Data points, bins and empty-bin share for every candidate frequency",
+               "The resampled series (replaces the raw one for later agents)")
+    decisions = {
+        "resampled": "Enough data points and few empty bins; the pipeline continues.",
+        "sparse": "Enough points, but over half the bins are empty; a coarser frequency is suggested.",
+        "too_few_points": f"Fewer than {MIN_POINTS} data points; finer frequencies are suggested and the pipeline stops.",
+    }
+    user_controls = ("Target frequency: auto or h, 2h, 3h, 4h, 6h, 12h, D, 2D, 3D, W",
+                     "Aggregation: mean, sum, median, min, max, first, last, count",
+                     "Empty bins: leave missing, forward fill, interpolate, zero")
+    tools = ("tools.resample.resample_options", "tools.resample.recommend_freq", "tools.resample.resample_series")
+
     def applies(self, state: PipelineState) -> str | None:
         if state.fact("regularity", "status") != "irregular":
             return f"Skipped: series already has fixed frequency '{state.freq}'."

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install (core + dev, no PyTorch)
+        run: uv sync --frozen
+      - name: Tests
+        run: uv run pytest
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build lite image and smoke-test it in a container
+        run: scripts/container_smoke_test.sh lite
+      - name: Build full image (LLM + baked model)
+        run: docker build -t fcagents:full .

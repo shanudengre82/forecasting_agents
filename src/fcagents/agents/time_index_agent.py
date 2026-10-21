@@ -15,6 +15,21 @@ class TimeIndexAgent(BaseAgent):
     scope = ("Only discuss which columns were identified. Do NOT talk about sampling frequency, regularity, "
              "trends or seasonality: later agents check those and they are unknown here.")
 
+    summary = ("Finds the column that holds the timestamps, the numeric column to forecast and, for long-format "
+               "data, the column that identifies each series.")
+    runs_when = "Always (first agent)."
+    inputs = ("Uploaded or sample CSV (any column names)",)
+    outputs = ("Time column and how it was parsed (ISO, day-first, epoch s/ms, YYYYMMDD, mixed)",
+               "Ranked time-column candidates with parse rate and score",
+               "Target column", "Series-id column and number of series (long format)")
+    decisions = {
+        "found": "One clear time column; the pipeline continues.",
+        "ambiguous": "Several plausible time columns; the best one is used, but you should confirm it.",
+        "not_found": "No column parses as dates; the pipeline stops.",
+    }
+    user_controls = ("Time column", "Target column", "Series to analyse (long format)")
+    tools = ("tools.time_index.detect_time_column", "tools.time_index.parse_time_column")
+
     def run_tools(self, state: PipelineState) -> dict:
         rep = detect_time_column(state.raw)
         by_col = {c["column"]: c for c in rep["candidates"]}

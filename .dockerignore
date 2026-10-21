@@ -1,5 +1,10 @@
 .venv
 .git
+.github
 __pycache__
+*.pyc
 .pytest_cache
 tests
+docker-compose.yml
+.env
+*.log
