@@ -26,6 +26,6 @@ if r.status != "skipped":
     ui.plot_series(ui.series_title(state, f" · {r.facts['method_label']}"), state.series,
                    state.target_col or "value", filled=r.extras["filled_index"])
     name = f"{state.target_col or 'series'}_{state.freq}_prepared.csv"
-    st.download_button("⬇ Download prepared series (CSV)", state.series.to_frame().to_csv(index_label="timestamp"),
-                       file_name=name, mime="text/csv")
+    st.download_button("Download prepared series (CSV)", state.series.to_frame().to_csv(index_label="timestamp"),
+                       file_name=name, mime="text/csv", icon=":material/download:")
 ui.nav_buttons("missing")

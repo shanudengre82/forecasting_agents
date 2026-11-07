@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Forecasting Agents</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Five agents that check, resample and repair a time series before you forecast it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap">
+<style>
+/* Layout: a bench instrument. Left-aligned column, one scope screen in the hero, the pipeline drawn as a
+   signal-flow strip with status lamps, same tokens as the Streamlit app (.streamlit/config.toml). */
+:root {
+  --bench: #E9EDF0;   /* page */
+  --panel: #FFFFFF;   /* screens, tables */
+  --ink: #17222C;
+  --muted: #5B6976;
+  --rule: #C5CFD7;
+  --grid: #DCE3E8;
+  --trace: #1B5FA8;   /* observed data, links, focus */
+  --estimate: #7A4FC4;/* filled values */
+  --warn: #B7860B;    /* missing timestamps */
+  --ok: #2F7D5B;
+  --error: #C0392B;
+  --font: "Archivo", "Helvetica Neue", Arial, system-ui, sans-serif;
+  --step--1: 0.8rem; --step-0: 1rem; --step-1: 1.25rem; --step-2: 1.5625rem; --step-3: 2.44rem; --step-4: 3.4rem;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bench: #151B21; --panel: #1D252D; --ink: #E3E9EE; --muted: #9AA8B4; --rule: #33404B; --grid: #28323C;
+    --trace: #5FA2E8; --estimate: #A88BEA; --warn: #E0B23A; --ok: #4FB386; --error: #E8675A;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bench: #151B21; --panel: #1D252D; --ink: #E3E9EE; --muted: #9AA8B4; --rule: #33404B; --grid: #28323C;
+  --trace: #5FA2E8; --estimate: #A88BEA; --warn: #E0B23A; --ok: #4FB386; --error: #E8675A;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bench); color: var(--ink);
+  font: 400 var(--step-0)/1.55 var(--font); font-variant-numeric: tabular-nums;
+}
+.wrap {
+  max-width: 72rem; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+h1, h2, h3 { font-stretch: 75%; line-height: 1.1; text-wrap: balance; margin: 0; }
+h2 { font-size: var(--step-3); font-weight: 650; letter-spacing: -0.01em; }
+h3 { font-size: var(--step-1); font-weight: 650; }
+p { margin: 0; }
+a { color: var(--trace); text-underline-offset: 0.15em; }
+:focus-visible { outline: 2px solid var(--trace); outline-offset: 3px; border-radius: 2px; }
+code { font: inherit; font-stretch: 75%; font-weight: 600; }
+
+/* Top bar */
+.bar { padding-block: 1rem; }
+.bar .wrap { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 0.55rem; font-stretch: 75%; font-weight: 650; font-size: var(--step-1); }
+.bar nav { display: flex; gap: 1.25rem; font-size: 0.95rem; }
+.bar nav a { color: var(--muted); text-decoration: none; }
+.bar nav a:hover { color: var(--ink); text-decoration: underline; }
+
+.lamp { display: inline-block; flex: none; width: 12px; height: 12px; border-radius: 999px; background: var(--lamp, var(--ok));
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.14); }
+
+/* Hero */
+.hero { padding-block: 2.5rem 4rem; }
+.hero .wrap { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 3rem; align-items: center; }
+.hero h1 { font-size: clamp(2.6rem, 6vw, 4.6rem); font-weight: 700; letter-spacing: -0.015em; line-height: 0.98; }
+.hero .lede { margin-top: 1.25rem; font-size: 1.125rem; color: var(--muted); max-width: 34rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 2rem; }
+.btn {
+  display: inline-flex; align-items: center; gap: 0.5rem; min-height: 44px; padding: 0 1.15rem;
+  border-radius: 4px; border: 1px solid var(--rule); font-weight: 600; text-decoration: none; color: var(--ink);
+  background: var(--panel);
+}
+.btn.primary { background: var(--trace); border-color: var(--trace); color: var(--panel); }
+.btn:hover { border-color: var(--ink); }
+.btn.primary:hover { filter: brightness(1.08); border-color: var(--trace); }
+
+.scope { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: 0.9rem 0.9rem 0.75rem; min-width: 0; }
+.scope-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; font-size: var(--step--1); color: var(--muted); }
+.scope-head strong { color: var(--ink); font-stretch: 75%; font-weight: 650; font-size: 0.95rem; }
+.scope canvas { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; max-width: 100%; margin-top: 0.5rem; }
+.readout { display: flex; flex-wrap: wrap; gap: 0.35rem 1.4rem; margin: 0.65rem 0 0; font-size: var(--step--1); color: var(--muted); }
+.readout span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.key { width: 14px; height: 0; border-top: 2px solid var(--trace); }
+.key.dot { width: 8px; height: 8px; border: 0; border-radius: 999px; background: var(--estimate); }
+.key.x { width: 9px; height: 9px; border: 0; background:
+  linear-gradient(45deg, transparent 42%, var(--warn) 42% 58%, transparent 58%),
+  linear-gradient(-45deg, transparent 42%, var(--warn) 42% 58%, transparent 58%); }
+.key.raw { width: 5px; height: 5px; border: 0; border-radius: 999px; background: var(--muted); opacity: .6; }
+.phase { color: var(--ink); font-weight: 600; }
+
+section { padding-block: 4rem; }
+section + section { border-top: 1px solid var(--rule); }
+.intro { display: grid; gap: 0.75rem; max-width: 40rem; margin-bottom: 2.5rem; }
+.intro p { color: var(--muted); font-size: 1.0625rem; }
+
+/* Pipeline strip: a real sequence, so it is numbered */
+.strip { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
+.strip > li { position: relative; padding-right: 1.25rem; min-width: 0; }
+.strip > li + li::before {
+  content: ""; position: absolute; top: 8px; right: calc(100% + 6px); width: calc(100% - 30px);
+  border-top: 2px solid var(--trace);
+}
+.strip .lamp { width: 18px; height: 18px; position: relative; z-index: 1; }
+.strip h3 { margin-top: 0.9rem; }
+.strip h3 span { color: var(--muted); font-weight: 500; }
+.strip p { margin-top: 0.4rem; font-size: 0.95rem; color: var(--muted); }
+.decisions { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.8rem 0 0; padding: 0; list-style: none; }
+.decisions li { padding: 0.1rem 0.45rem; border: 1px solid var(--rule); border-radius: 4px; font-stretch: 75%;
+  font-weight: 600; font-size: 0.85rem; background: var(--panel); }
+.decisions li::before { content: none; }
+
+/* How it decides */
+.chain { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1.5rem; }
+.chain div { display: grid; gap: 0.5rem; align-content: start; padding-top: 1rem; border-top: 2px solid var(--ink); min-width: 0; }
+.chain div:last-child { border-top-style: dashed; border-top-color: var(--muted); }
+.chain p { color: var(--muted); }
+
+/* Model and token */
+.table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; }
+table { width: 100%; border-collapse: collapse; min-width: 40rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.85rem 1rem; border-bottom: 1px solid var(--grid); }
+thead th { font-stretch: 75%; font-weight: 650; font-size: var(--step-1); border-bottom: 1px solid var(--rule); }
+tbody th { font-weight: 500; color: var(--muted); width: 9rem; }
+tr:last-child > * { border-bottom: 0; }
+.note { margin-top: 1.25rem; max-width: 44rem; color: var(--muted); }
+.note strong { color: var(--ink); }
+
+/* Run it */
+.run { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2.5rem; align-items: start; }
+pre { margin: 0; overflow-x: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 4px;
+  padding: 1rem 1.1rem; font: 500 0.92rem/1.7 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
+pre .c { color: var(--muted); }
+.samples { margin: 0.75rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.35rem; }
+.samples li { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--grid); padding-bottom: 0.35rem; }
+.samples li span:last-child { color: var(--muted); text-align: right; }
+
+footer { padding-block: 2rem 3rem; border-top: 1px solid var(--rule); color: var(--muted); font-size: 0.9rem; }
+footer .wrap { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+@media (max-width: 900px) {
+  .hero .wrap, .run { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+  .strip { grid-template-columns: minmax(0, 1fr); gap: 1.75rem; }
+  .strip > li { padding: 0 0 0 2.25rem; }
+  .strip .lamp { position: absolute; left: 0; top: 2px; }
+  .strip h3 { margin-top: 0; }
+  .strip > li + li::before { top: calc(-1.75rem + 4px); left: 8px; right: auto; width: 0; height: calc(1.75rem - 8px);
+    border-top: 0; border-left: 2px solid var(--trace); }
+  .chain { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 600px) {
+  table { min-width: 0; font-size: 0.92rem; }
+  th, td { padding: 0.7rem 0.6rem; }
+  tbody th { width: auto; }
+}
+@media (max-width: 480px) { .bar nav { display: none; } section { padding-block: 3rem; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap">
+    <div class="brand"><span class="lamp" aria-hidden="true"></span>Forecasting Agents</div>
+    <nav aria-label="Sections">
+      <a href="#pipeline">Pipeline</a>
+      <a href="#decisions">How it decides</a>
+      <a href="#model">Your model</a>
+      <a href="#run">Run it</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<div class="hero">
+  <div class="wrap">
+    <div>
+      <h1>Get a time series ready to forecast.</h1>
+      <p class="lede">Five agents find the time column, put irregular readings on a fixed grid, name the frequency
+        and fill the gaps. Tools measure every fact and rules make every decision. A language model only explains
+        what was found.</p>
+      <div class="actions">
+        <a class="btn primary" id="open-app" href="https://github.com/shanudengre82/forecasting_agents">Open the app</a>
+        <a class="btn" href="https://github.com/shanudengre82/forecasting_agents">View the code on GitHub</a>
+      </div>
+    </div>
+
+    <figure class="scope" style="margin:0">
+      <div class="scope-head">
+        <strong>irregular_sensor.csv · reading</strong>
+        <span id="phase-label" class="phase" aria-live="polite">Resampled to hourly, gaps filled</span>
+      </div>
+      <canvas id="scope" width="960" height="540" role="img"
+        aria-label="Irregular sensor readings are binned onto an hourly grid. Empty hours are marked as missing and then filled with estimates."></canvas>
+      <figcaption class="readout">
+        <span><i class="key raw" aria-hidden="true"></i>Raw readings</span>
+        <span><i class="key" aria-hidden="true"></i>Hourly mean</span>
+        <span><i class="key x" aria-hidden="true"></i>Missing hour</span>
+        <span><i class="key dot" aria-hidden="true"></i>Filled estimate</span>
+      </figcaption>
+    </figure>
+  </div>
+</div>
+
+<section id="pipeline">
+  <div class="wrap">
+    <div class="intro">
+      <h2>Five agents, in order</h2>
+      <p>Each agent runs its tools, decides with fixed rules and hands a cleaner series to the next one.
+        If a check fails, the pipeline stops and tells you why.</p>
+    </div>
+    <ol class="strip">
+      <li>
+        <span class="lamp" aria-hidden="true"></span>
+        <h3><span>1.</span> Time Index</h3>
+        <p>Finds the column that holds timestamps and the value to forecast. Handles long tables with several series.</p>
+        <ul class="decisions" aria-label="Possible decisions"><li>found</li><li>ambiguous</li><li>not_found</li></ul>
+      </li>
+      <li>
+        <span class="lamp" aria-hidden="true"></span>
+        <h3><span>2.</span> Regularity</h3>
+        <p>Checks for a fixed spacing, including business days and month ends, and counts duplicates and gaps.</p>
+        <ul class="decisions" aria-label="Possible decisions"><li>regular</li><li>regular_with_gaps</li><li>irregular</li></ul>
+      </li>
+      <li>
+        <span class="lamp" aria-hidden="true"></span>
+        <h3><span>3.</span> Resampling</h3>
+        <p>Bins irregular readings onto a grid from 1 hour to 1 week and needs at least 30 points to continue.</p>
+        <ul class="decisions" aria-label="Possible decisions"><li>resampled</li><li>sparse</li><li>too_few_points</li></ul>
+      </li>
+      <li>
+        <span class="lamp" aria-hidden="true"></span>
+        <h3><span>4.</span> Frequency</h3>
+        <p>Names the frequency as a pandas alias and proposes seasonal periods to test, such as 24 and 168 for hourly data.</p>
+        <ul class="decisions" aria-label="Possible decisions"><li>h</li><li>D</li><li>W-SUN</li><li>MS</li></ul>
+      </li>
+      <li>
+        <span class="lamp" aria-hidden="true"></span>
+        <h3><span>5.</span> Missing Values</h3>
+        <p>Fills every empty slot on the grid by interpolation, carrying values forward, zero or the value one season earlier.</p>
+        <ul class="decisions" aria-label="Possible decisions"><li>complete</li><li>filled</li><li>long_gaps</li></ul>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section id="decisions">
+  <div class="wrap">
+    <div class="intro">
+      <h2>How a decision is made</h2>
+      <p>A small model can invent numbers, so it never gets to choose what happens next.</p>
+    </div>
+    <div class="chain">
+      <div>
+        <h3>Tools measure</h3>
+        <p>pandas and numpy compute coverage, spacing, gap runs and points per candidate frequency. Every fact
+          is shown with the result.</p>
+      </div>
+      <div>
+        <h3>Rules decide</h3>
+        <p>Fixed thresholds pick the outcome, for example fewer than 30 points stops resampling and
+          suggests a finer frequency.</p>
+      </div>
+      <div>
+        <h3>The model explains</h3>
+        <p>It restates the verdict in plain words from those facts. In the chat it may propose a setting change,
+          which waits until you press Apply.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="model">
+  <div class="wrap">
+    <div class="intro">
+      <h2>Your model, your token</h2>
+      <p>Pick the language model in the app's sidebar, or turn it off and read rule-based summaries. What the
+        sidebar offers depends on where the app runs.</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><td></td><th scope="col">Model in the app</th><th scope="col">Your own server</th><th scope="col">Hugging Face API</th></tr>
+        </thead>
+        <tbody>
+          <tr><th scope="row">Where</th><td>Everywhere</td><td>When you run the app yourself</td><td>On the Hugging Face Space</td></tr>
+          <tr><th scope="row">Model</th><td>Any public chat model that fits on CPU. Default Qwen2.5-0.5B-Instruct.</td>
+            <td>Any model your Ollama, vLLM or LM Studio server lists.</td>
+            <td>Any chat model served by Inference Providers. Default Qwen2.5-7B-Instruct.</td></tr>
+          <tr><th scope="row">Token</th><td>None needed.</td><td>None needed.</td>
+            <td>Your own fine-grained token with “Make calls to Inference Providers”.</td></tr>
+          <tr><th scope="row">Cost</th><td>Free. Runs on the app's CPU.</td><td>Free. Runs on your machine.</td>
+            <td>Billed to your Hugging Face account.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note"><strong>The app never uses its own token for your requests.</strong> Your token stays in your
+      browser session only. It is not saved, logged or shared with other visitors, and without one the hosted
+      model stays off. Create a token at
+      <a href="https://huggingface.co/settings/tokens">huggingface.co/settings/tokens</a>.</p>
+  </div>
+</section>
+
+<section id="run">
+  <div class="wrap run">
+    <div class="intro" style="margin:0">
+      <h2>Run it yourself</h2>
+      <p>The app runs locally, in Docker or as a Hugging Face Space. Seven sample datasets are included, so you
+        can try every agent without your own data.</p>
+      <ul class="samples" aria-label="Sample datasets">
+        <li><span>hourly_energy.csv</span><span>regular hourly</span></li>
+        <li><span>irregular_sensor.csv</span><span>irregular readings</span></li>
+        <li><span>daily_sales_with_gaps.csv</span><span>missing days</span></li>
+        <li><span>15min_with_duplicates.csv</span><span>duplicate timestamps</span></li>
+        <li><span>business_day_stock.csv</span><span>business days</span></li>
+        <li><span>monthly_passengers.csv</span><span>month starts</span></li>
+        <li><span>multi_store_long.csv</span><span>several series</span></li>
+      </ul>
+    </div>
+    <pre aria-label="Commands"><span class="c"># locally, with the CPU model</span>
+uv sync --extra llm
+uv run streamlit run app.py
+
+<span class="c"># or in Docker, on port 7860</span>
+docker build -t fcagents .
+docker run --rm -p 7860:7860 fcagents</pre>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>Forecasting Agents. Open source on GitHub.</span>
+    <a href="https://github.com/shanudengre82/forecasting_agents">github.com/shanudengre82/forecasting_agents</a>
+  </div>
+</footer>
+
+<script>
+(() => {
+  // Set this to the Space URL once it is live, e.g. "https://huggingface.co/spaces/<user>/<space>".
+  const SPACE_URL = "";
+  if (SPACE_URL) document.getElementById("open-app").href = SPACE_URL;
+
+  const canvas = document.getElementById("scope");
+  const ctx = canvas.getContext("2d");
+  const label = document.getElementById("phase-label");
+  const W = canvas.width, H = canvas.height;
+  const PAD = { l: 52, r: 16, t: 18, b: 40 };
+  const HOURS = 48;
+
+  // Deterministic "sensor": daily cycle plus noise, sampled at irregular times with a few dead hours.
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const dead = new Set([9, 10, 21, 30, 31, 32, 41]);
+  const raw = [];
+  for (let h = 0; h < HOURS; h++) {
+    if (dead.has(h)) continue;
+    const n = 1 + Math.floor(rnd() * 3);
+    for (let k = 0; k < n; k++) {
+      const t = h + rnd();
+      raw.push({ t, v: 20 + 5 * Math.sin((t / 24) * 2 * Math.PI - 1.2) + (rnd() - 0.5) * 3 });
+    }
+  }
+  const bins = Array.from({ length: HOURS }, (_, h) => {
+    const pts = raw.filter(p => Math.floor(p.t) === h);
+    return pts.length ? pts.reduce((a, p) => a + p.v, 0) / pts.length : null;
+  });
+  const filled = bins.map((v, h) => {
+    if (v !== null) return v;
+    let a = h - 1, b = h + 1;
+    while (a >= 0 && bins[a] === null) a--;
+    while (b < HOURS && bins[b] === null) b++;
+    if (a < 0) return bins[b];
+    if (b >= HOURS) return bins[a];
+    return bins[a] + (bins[b] - bins[a]) * (h - a) / (b - a);
+  });
+  const vMin = 12, vMax = 28;
+  const x = t => PAD.l + (t / HOURS) * (W - PAD.l - PAD.r);
+  const y = v => PAD.t + (1 - (v - vMin) / (vMax - vMin)) * (H - PAD.t - PAD.b);
+
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const ease = s => s < 0 ? 0 : s > 1 ? 1 : 1 - Math.pow(1 - s, 3);
+
+  function grid(c) {
+    ctx.fillStyle = c.panel; ctx.fillRect(0, 0, W, H);
+    ctx.lineWidth = 1;
+    for (let h = 0; h <= HOURS; h += 2) {
+      ctx.strokeStyle = h % 12 === 0 ? c.rule : c.grid;
+      ctx.beginPath(); ctx.moveTo(x(h) + 0.5, PAD.t); ctx.lineTo(x(h) + 0.5, H - PAD.b); ctx.stroke();
+    }
+    for (let v = vMin; v <= vMax; v += 2) {
+      ctx.strokeStyle = v % 4 === 0 ? c.rule : c.grid;
+      ctx.beginPath(); ctx.moveTo(PAD.l, y(v) + 0.5); ctx.lineTo(W - PAD.r, y(v) + 0.5); ctx.stroke();
+    }
+    ctx.fillStyle = c.muted; ctx.font = "500 20px Archivo, Arial, sans-serif";
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let v = 12; v <= 28; v += 4) ctx.fillText(v + "°", PAD.l - 10, y(v));
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    [0, 12, 24, 36, 48].forEach(h => ctx.fillText(h === 0 ? "00:00" : h % 24 === 0 ? "+" + h / 24 + "d" : "12:00", x(h), H - PAD.b + 10));
+  }
+
+  // p: 0..1 progress. 0–0.35 raw readings slide to their hour, 0.3–0.6 the hourly line draws,
+  // 0.6–0.75 missing hours are marked, 0.75–1 estimates fill them.
+  function draw(p) {
+    const c = { panel: css("--panel"), rule: css("--rule"), grid: css("--grid"), muted: css("--muted"),
+                trace: css("--trace"), warn: css("--warn"), estimate: css("--estimate") };
+    grid(c);
+    const snap = ease(p / 0.35);
+    ctx.fillStyle = c.muted;
+    ctx.globalAlpha = 0.55 - 0.25 * snap;
+    raw.forEach(pt => {
+      const tx = pt.t + (Math.floor(pt.t) + 0.5 - pt.t) * snap;
+      ctx.beginPath(); ctx.arc(x(tx), y(pt.v), 4, 0, 7); ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
+    const line = ease((p - 0.3) / 0.3);
+    if (line > 0) {
+      ctx.strokeStyle = c.trace; ctx.lineWidth = 3; ctx.lineJoin = "round";
+      const upto = line * HOURS;
+      ctx.beginPath();
+      let pen = false;
+      bins.forEach((v, h) => {
+        if (h + 0.5 > upto) return;
+        if (v === null) { pen = false; return; }
+        pen ? ctx.lineTo(x(h + 0.5), y(v)) : ctx.moveTo(x(h + 0.5), y(v));
+        pen = true;
+      });
+      ctx.stroke();
+    }
+    const mark = ease((p - 0.6) / 0.15);
+    if (mark > 0) {
+      ctx.strokeStyle = c.warn; ctx.lineWidth = 3; ctx.globalAlpha = mark;
+      bins.forEach((v, h) => {
+        if (v !== null) return;
+        const cx = x(h + 0.5), cy = H - PAD.b - 14, s = 7;
+        ctx.beginPath(); ctx.moveTo(cx - s, cy - s); ctx.lineTo(cx + s, cy + s);
+        ctx.moveTo(cx + s, cy - s); ctx.lineTo(cx - s, cy + s); ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+    }
+    const fill = ease((p - 0.75) / 0.25);
+    if (fill > 0) {
+      bins.forEach((v, h) => {
+        if (v !== null) return;
+        ctx.globalAlpha = fill;
+        ctx.strokeStyle = c.estimate; ctx.lineWidth = 2; ctx.setLineDash([5, 5]);
+        const a = h - 1 >= 0 ? h - 1 : h, b = h + 1 < HOURS ? h + 1 : h;
+        ctx.beginPath(); ctx.moveTo(x(a + 0.5), y(filled[a])); ctx.lineTo(x(b + 0.5), y(filled[b])); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = c.estimate; ctx.strokeStyle = c.panel; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(x(h + 0.5), y(filled[h]), 7, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+    }
+    label.textContent = p < 0.3 ? "Raw readings at irregular times"
+      : p < 0.6 ? "Binned to an hourly mean"
+      : p < 0.75 ? "7 hours have no reading" : "Resampled to hourly, gaps filled";
+  }
+
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)");
+  let progress = 1;
+  function play() {
+    if (reduce.matches) { progress = 1; draw(1); return; }
+    const start = performance.now(), DURATION = 4200, HOLD = 500;
+    const tick = now => {
+      progress = Math.min(1, Math.max(0, (now - start - HOLD) / DURATION));
+      draw(progress);
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    draw(0);
+    requestAnimationFrame(tick);
+  }
+  // Redraw in the new colours when the theme changes; replay when the font arrives so the axis text is right.
+  const redraw = () => draw(progress);
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redraw);
+  new MutationObserver(redraw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(redraw);
+  play();
+})();
+</script>
+</body>
+</html>

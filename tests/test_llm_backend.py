@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import huggingface_hub
 import pytest
 
-from fcagents.llm.backend import InferenceAPIBackend
+from fcagents.llm.backend import InferenceAPIBackend, LocalServerBackend, list_server_models
 
 USER_TOKEN = "hf_user_token_123"
 
@@ -13,12 +13,15 @@ USER_TOKEN = "hf_user_token_123"
 class FakeClient:
     instances: list["FakeClient"] = []
 
-    def __init__(self, model=None, token=None, provider=None):
+    def __init__(self, model=None, token=None, provider=None, base_url=None, api_key=None):
         self.model, self.token, self.provider = model, token, provider
+        self.base_url, self.api_key = base_url, api_key
+        self.calls = []
         self.reply: str | Exception = "  The series is hourly.  "
         FakeClient.instances.append(self)
 
-    def chat_completion(self, messages, max_tokens=None, temperature=None):
+    def chat_completion(self, messages, max_tokens=None, temperature=None, model=None):
+        self.calls.append(model)
         if isinstance(self.reply, Exception):
             raise self.reply
         return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=self.reply))])
@@ -58,3 +61,23 @@ def test_errors_degrade_to_empty_text_without_leaking_token():
     FakeClient.instances[-1].reply = RuntimeError(f"401 Unauthorized for token {USER_TOKEN}")
     assert llm.generate("sys", "user") == ""
     assert "401" in llm.last_error and USER_TOKEN not in llm.last_error
+
+
+def test_local_server_never_sends_the_host_hf_token():
+    llm = LocalServerBackend("http://localhost:11434/v1/", "qwen2.5:0.5b")
+    client = FakeClient.instances[-1]
+    assert client.base_url == "http://localhost:11434/v1"
+    assert client.api_key == "local" and client.token is None
+    assert llm.generate("sys", "user") == "The series is hourly."
+    assert client.calls == ["qwen2.5:0.5b"] and llm.name == "server:qwen2.5:0.5b"
+
+
+def test_local_server_errors_degrade_to_empty_text():
+    llm = LocalServerBackend("http://localhost:11434/v1", "m")
+    FakeClient.instances[-1].reply = ConnectionError("refused")
+    assert llm.generate("sys", "user") == "" and "refused" in llm.last_error
+
+
+def test_list_server_models_handles_unreachable_and_non_http_urls():
+    assert list_server_models("http://127.0.0.1:9/v1", timeout=0.5) == []
+    assert list_server_models("file:///etc/passwd") == []

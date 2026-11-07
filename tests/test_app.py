@@ -1,6 +1,8 @@
+import re
 from pathlib import Path
 
 import pytest
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 APP = str(Path(__file__).resolve().parents[1] / "app.py")
@@ -20,7 +22,8 @@ def _app(sample: str) -> AppTest:
 
 
 def _decisions(at) -> str:
-    return " ".join(m.value for m in at.markdown if m.value.startswith("**Decision:**"))
+    """Decisions shown in the agent cards, as `code` words (read from the card header's data attribute)."""
+    return " ".join(f"`{d}`" for h in at.get("html") for d in re.findall(r'data-decision="([^"]*)"', h.value))
 
 
 def _page(at, name: str) -> AppTest:
@@ -105,6 +108,7 @@ def _sidebar_caption(at) -> str:
 def test_hosted_llm_never_falls_back_to_the_app_token(monkeypatch):
     monkeypatch.setenv("USE_LLM", "1")
     monkeypatch.setenv("LLM_BACKEND", "api")
+    monkeypatch.setenv("SPACE_ID", "user/space")
     monkeypatch.setenv("HF_TOKEN", "hf_app_owner_secret")
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert not at.exception
@@ -125,6 +129,7 @@ def test_hosted_llm_uses_typed_token_and_model(monkeypatch):
     monkeypatch.setattr(backend, "InferenceAPIBackend", StubBackend)
     monkeypatch.setenv("USE_LLM", "1")
     monkeypatch.setenv("LLM_BACKEND", "api")
+    monkeypatch.setenv("SPACE_ID", "user/space")
     monkeypatch.setenv("HF_TOKEN", "hf_app_owner_secret")
     at = AppTest.from_file(APP, default_timeout=30).run()
     at.sidebar.text_input(key="hf_token").set_value("hf_user_token").run()
@@ -132,3 +137,84 @@ def test_hosted_llm_uses_typed_token_and_model(monkeypatch):
     assert not at.exception
     assert _sidebar_caption(at) == "Backend: `hf-api:org/my-model`"
     assert seen and all(tok == "hf_user_token" for _, tok, _ in seen)
+
+
+def test_step_strip_shows_status_lamps():
+    at = _page(_app("hourly_energy.csv"), "data")
+    strip = next(h.value for h in at.get("html") if "fc-strip" in h.value)
+    assert 'aria-current="step"' in strip and "1. Data" in strip
+    assert 'aria-label="Checked"' in strip and 'aria-label="Not run yet"' in strip
+
+
+def test_card_header_is_escaped():
+    from types import SimpleNamespace
+
+    from fcagents.ui import result_header_html
+
+    r = SimpleNamespace(decision="<b>x</b>", status="ok", title="T<script>", confidence=0.5, elapsed_s=0.1)
+    html = result_header_html(r)
+    assert "<script>" not in html and "&lt;b&gt;" in html
+
+
+def _backend_radio(at):
+    return next(r for r in at.sidebar.radio if r.label == "Backend")
+
+
+def test_local_run_offers_no_hugging_face_token_option(monkeypatch):
+    monkeypatch.delenv("SPACE_ID", raising=False)
+    monkeypatch.setenv("USE_LLM", "1")
+    monkeypatch.setenv("LLM_BACKEND", "api")  # ignored outside a Space
+    import fcagents.llm.backend as backend
+
+    class StubLocal(backend.NullBackend):
+        def __init__(self, model_id):
+            self.name = model_id
+
+    monkeypatch.setattr(backend, "TransformersBackend", StubLocal)  # don't load the real CPU model
+    st.cache_resource.clear()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    st.cache_resource.clear()
+    assert _sidebar_caption(at).startswith("Backend: `Qwen/")  # LLM_BACKEND=api fell back to the local model
+    radio = _backend_radio(at)
+    assert radio.options == ["Local model (in-app, CPU)", "Local LLM server (Ollama, vLLM, LM Studio)"]
+    assert not [t for t in at.sidebar.text_input if t.key == "hf_token"]
+
+
+def test_space_offers_hugging_face_api(monkeypatch):
+    monkeypatch.setenv("SPACE_ID", "user/space")
+    monkeypatch.setenv("USE_LLM", "1")
+    monkeypatch.setenv("LLM_BACKEND", "api")
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert _backend_radio(at).options == ["Local model (in-app, CPU)", "Hugging Face API (your token)"]
+
+
+def test_local_server_backend_uses_listed_model(monkeypatch):
+    import fcagents.llm.backend as backend
+
+    class StubServer(backend.NullBackend):
+        def __init__(self, base_url, model_id, api_key=None):
+            self.name = f"server:{model_id}"
+
+    monkeypatch.delenv("SPACE_ID", raising=False)
+    monkeypatch.setenv("USE_LLM", "1")
+    monkeypatch.setenv("LLM_BACKEND", "server")
+    monkeypatch.setenv("LOCAL_LLM_MODEL", "qwen2.5:0.5b")
+    monkeypatch.setattr(backend, "list_server_models", lambda url, timeout=2.0: ["llama3.2", "qwen2.5:0.5b"])
+    monkeypatch.setattr(backend, "LocalServerBackend", StubServer)
+    st.cache_data.clear()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert not at.exception
+    assert _sidebar_caption(at) == "Backend: `server:qwen2.5:0.5b`"
+
+
+def test_unreachable_local_server_falls_back_to_rules(monkeypatch):
+    import fcagents.llm.backend as backend
+
+    monkeypatch.delenv("SPACE_ID", raising=False)
+    monkeypatch.setenv("USE_LLM", "1")
+    monkeypatch.setenv("LLM_BACKEND", "server")
+    monkeypatch.setattr(backend, "list_server_models", lambda url, timeout=2.0: [])
+    st.cache_data.clear()  # the model list is cached across reruns
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert _sidebar_caption(at) == "Backend: `none`"
+    assert any("Can't reach an LLM server" in w.value for w in at.sidebar.warning)

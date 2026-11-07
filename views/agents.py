@@ -8,7 +8,7 @@ from fcagents.catalog import PRINCIPLE, agent_catalog, pipeline_dot
 from fcagents.orchestrator import PIPELINE
 from fcagents.tools.resample import MAX_FREQ, MIN_FREQ, MIN_POINTS
 
-st.header("Agents")
+st.header("Agents", anchor=False)
 st.markdown(f"**Design principle:** {PRINCIPLE}")
 st.graphviz_chart(pipeline_dot(), width="stretch")
 c1, c2, c3 = st.columns(3)
@@ -22,8 +22,8 @@ page = None
 for a in agent_catalog():
     if a["page"] != page:
         page = a["page"]
-        st.markdown(f"#### Page: {page}")
-    with st.container(border=True):
+        st.subheader(f"{page} page", anchor=False, divider="gray")
+    with st.container(border=True, key=f"fccard_cat_{a['name']}"):
         st.subheader(f"{a['step']}. {a['title']}")
         st.write(a["summary"])
         st.markdown(f"**Runs when:** {a['runs_when']}")

@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from fcagents import theme
 from fcagents.chat import HINTS, respond
 from fcagents.chat.actions import DEFAULTS, PAGE_KEYS
 from fcagents.orchestrator import STAGE_TITLES, STAGES, initial_state, run_stage
@@ -14,11 +15,6 @@ from fcagents.tools.time_index import detect_time_column
 
 STAGE_ORDER = list(STAGES)
 PAGE_FILES = {"data": "views/data.py", "resampling": "views/resampling.py", "missing": "views/missing.py"}
-STATUS_ICON = {"ok": "✅", "warning": "⚠️", "error": "❌", "skipped": "⏭️"}
-SERIES_COLOR = "#2a78d6"  # categorical slot 1
-FILLED_COLOR = "#eb6834"  # categorical slot 2: estimated values, never real observations
-MISSING_COLOR = "#fab219"  # status: warning
-RAW_COLOR = "#9a9993"  # muted: context only
 
 # --------------------------------------------------------------------------- app context
 
@@ -88,35 +84,40 @@ def ensure_stage(stage: str) -> tuple[tuple, list, object]:
     return ss["stages"][stage]
 
 
-def _stage_icon(stage: str) -> str:
+def _stage_status(stage: str) -> str:
+    """ok | warning | error | skipped | pending (not run yet, or stale because an earlier step changed)."""
     entry = st.session_state.get("stages", {}).get(stage)
     i = STAGE_ORDER.index(stage)
     if entry is None or (i and st.session_state["stages"].get(STAGE_ORDER[i - 1], (None,))[0] != entry[0][0]):
-        return "○"  # not run yet, or stale because an earlier step changed
+        return "pending"
     statuses = {r.status for r in entry[1]}
-    for s in ("error", "warning", "ok"):
-        if s in statuses:
-            return STATUS_ICON[s]
-    return STATUS_ICON["skipped"]
+    return next((s for s in ("error", "warning", "ok") if s in statuses), "skipped")
 
 
 def page_header(stage: str, intro: str) -> None:
-    steps = []
-    for i, s in enumerate(STAGE_ORDER, start=1):
-        label = f"{_stage_icon(s)} {i}. {STAGE_TITLES[s]}"
-        steps.append(f"**{label}**" if s == stage else label)
-    st.caption("  →  ".join(steps))
-    st.header(f"{STAGE_ORDER.index(stage) + 1}. {STAGE_TITLES[stage]}")
+    """Signal-flow strip (one status lamp per step), then the step's title and question."""
+    current = STAGE_ORDER.index(stage)
+    items = []
+    for i, s in enumerate(STAGE_ORDER):
+        status = _stage_status(s)
+        cls = " ".join(c for c in ("is-done" if i < current else "", "is-current" if i == current else "") if c)
+        aria = ' aria-current="step"' if i == current else ""
+        items.append(f'<li class="{cls}"{aria}>{theme.lamp(status)}'
+                     f'<span class="fc-step-name">{i + 1}. {theme.esc(STAGE_TITLES[s])}</span>'
+                     f'<span class="fc-step-state">{theme.LAMP[status][1]}</span></li>')
+    st.html(f'<nav class="fc-strip" aria-label="Pipeline steps"><ol>{"".join(items)}</ol></nav>')
+    st.header(STAGE_TITLES[stage], anchor=False)
     st.caption(intro)
 
 
 def nav_buttons(stage: str) -> None:
     i = STAGE_ORDER.index(stage)
-    left, _, right = st.columns([2, 5, 2])
-    if i > 0 and left.button(f"← {STAGE_TITLES[STAGE_ORDER[i - 1]]}", width="stretch"):
+    left, _, right = st.columns([3, 2, 3])
+    if i > 0 and left.button(f"Back to {STAGE_TITLES[STAGE_ORDER[i - 1]]}", icon=":material/arrow_back:",
+                             width="stretch"):
         st.switch_page(PAGE_FILES[STAGE_ORDER[i - 1]])
-    if i < len(STAGE_ORDER) - 1 and right.button(f"{STAGE_TITLES[STAGE_ORDER[i + 1]]} →", type="primary",
-                                                  width="stretch"):
+    if i < len(STAGE_ORDER) - 1 and right.button(f"Next: {STAGE_TITLES[STAGE_ORDER[i + 1]]}", type="primary",
+                                                  icon=":material/arrow_forward:", width="stretch"):
         st.switch_page(PAGE_FILES[STAGE_ORDER[i + 1]])
 
 
@@ -149,8 +150,8 @@ def chat_panel(stage: str, ctx: dict, entry) -> None:
     """Chat at the top of a page: commands change this page's controls, questions are answered from facts."""
     _, results, state = entry
     history = st.session_state["chat"].setdefault(stage, [])
-    with st.container(border=True):
-        st.markdown("**💬 Chat with this step**")
+    with st.container(border=True, key=f"fcchat_{stage}"):
+        st.markdown("**Chat with this step**")
         st.caption(HINTS[stage])
         if history:
             box = st.container(height=220)
@@ -165,9 +166,10 @@ def chat_panel(stage: str, ctx: dict, entry) -> None:
         pending = st.session_state["pending"].get(stage)
         if pending:
             apply_col, dismiss_col, _ = st.columns([1, 1, 4])
-            apply_col.button("✅ Apply", key=f"apply_{stage}", type="primary", on_click=_resolve,
-                             args=(stage, ctx, True))
-            dismiss_col.button("✖ Dismiss", key=f"dismiss_{stage}", on_click=_resolve, args=(stage, ctx, False))
+            apply_col.button("Apply", key=f"apply_{stage}", type="primary", icon=":material/check:",
+                             on_click=_resolve, args=(stage, ctx, True))
+            dismiss_col.button("Dismiss", key=f"dismiss_{stage}", icon=":material/close:", on_click=_resolve,
+                               args=(stage, ctx, False))
         prompt = st.chat_input("Ask about the series, or tell me what to change…", key=f"chat_input_{stage}")
     if not prompt:
         return
@@ -199,18 +201,32 @@ def _resolve(stage: str, ctx: dict, accept: bool) -> None:
 # --------------------------------------------------------------------------- results and charts
 
 
+def result_header_html(r) -> str:
+    """Channel header: status lamp and title, then the decision / confidence / time readouts."""
+    pct = max(0, min(100, round(r.confidence * 100)))
+    return (
+        f'<div class="fc-card-head" data-decision="{theme.esc(r.decision)}">'
+        f'<div class="fc-card-name">{theme.lamp(r.status)}<h3 class="fc-card-title">{theme.esc(r.title)}</h3></div>'
+        f'<dl class="fc-readouts">'
+        f'<div><dt>Decision</dt><dd>{theme.esc(r.decision)}</dd></div>'
+        f'<div><dt>Confidence</dt><dd><span class="fc-meter" aria-hidden="true"><span style="width:{pct}%">'
+        f'</span></span>{pct}%</dd></div>'
+        f'<div><dt>Time</dt><dd>{r.elapsed_s:.2f} s</dd></div>'
+        f'</dl></div>'
+    )
+
+
 def render_result(r) -> None:
-    with st.container(border=True):
-        head, badge = st.columns([5, 2])
-        head.subheader(f"{STATUS_ICON.get(r.status, '')} {r.title}")
-        badge.markdown(f"**Decision:** `{r.decision}`  \n**Confidence:** {r.confidence:.0%} · {r.elapsed_s}s")
+    with st.container(border=True, key=f"fccard_{r.agent}"):
+        st.html(result_header_html(r))
         st.write(r.summary)
-        if r.explanation:
-            st.info(r.explanation, icon="🤖")
+        if r.explanation:  # LLM text: always escaped, never rendered as HTML
+            st.html(f'<div class="fc-llm"><small>Explained by the language model, from the facts below</small>'
+                    f'<p>{theme.esc(r.explanation)}</p></div>')
         if r.agent == "resampling" and r.facts:
             render_resampling_details(r)
         if r.next_step:
-            st.markdown(f"**Next step →** {r.next_step}")
+            st.markdown(f"**Next step:** {r.next_step}")
         if r.facts:
             with st.expander("Facts & prompt"):
                 st.json(r.facts, expanded=False)
@@ -223,11 +239,11 @@ def render_resampling_details(r) -> None:
     if r.decision == "too_few_points":
         st.warning(f"Only **{f['n_points']}** data points at **{f['chosen_freq']}**; at least {MIN_POINTS} "
                    f"are needed. {r.next_step} Change *Target frequency* above, or type it in the chat.",
-                   icon="⚠️")
+                   icon=":material/warning:")
     table = pd.DataFrame(f["options"])
-    table["≥ 30 points"] = table["enough_points"].map({True: "✅ yes", False: "⚠️ no"})
+    table["≥ 30 points"] = table["enough_points"].map({True: "yes", False: "no"})
     table["chosen"] = table["freq"].map(
-        lambda x: "◀ chosen" if x == f["chosen_freq"] else ("recommended" if x == f["recommended_freq"] else ""))
+        lambda x: "chosen" if x == f["chosen_freq"] else ("recommended" if x == f["recommended_freq"] else ""))
     table = table[["freq", "label", "n_points", "n_bins", "empty_share", "≥ 30 points", "chosen"]]
     st.caption("Points per candidate frequency (points = bins that contain observations)")
     st.dataframe(table, hide_index=True, width="stretch",
@@ -241,28 +257,28 @@ def plot_series(title: str, series: pd.Series | None, name: str, raw: pd.Series 
         return
     s = series[~series.index.isna()].sort_index()
     s = s.groupby(level=0).mean()  # collapse duplicate timestamps for display
+    p = theme.palette()
     fig = go.Figure()
     if raw is not None:
         raw = raw.dropna()
         fig.add_trace(go.Scatter(x=raw.index, y=raw.values, mode="markers", name="raw observations",
-                                 marker=dict(color=RAW_COLOR, size=4, opacity=0.6)))
+                                 marker=dict(color=p["raw"], size=4, opacity=0.6)))
     y = s.values if s.notna().any() else [1] * len(s)
     fig.add_trace(go.Scatter(x=s.index, y=y, mode="lines+markers" if len(s) < 60 else "lines", name=name,
-                             line=dict(color=SERIES_COLOR, width=2), marker=dict(size=8)))
+                             line=dict(color=p["trace"], width=2), marker=dict(size=6)))
     if filled is not None and len(filled):
         fig.add_trace(go.Scatter(x=filled, y=s.reindex(filled).values, mode="markers",
                                  name=f"Filled value ({len(filled)})",
-                                 marker=dict(color=FILLED_COLOR, size=8)))
+                                 marker=dict(color=p["estimate"], size=8, line=dict(width=1.5, color=p["panel"]))))
     if missing is not None and len(missing):
         y0 = float(pd.Series(y).min())
         fig.add_trace(go.Scatter(x=missing[:5000], y=[y0] * min(len(missing), 5000), mode="markers",
                                  name=f"Missing timestamp ({len(missing)})",
-                                 marker=dict(color=MISSING_COLOR, symbol="x-thin-open", size=10,
-                                             line=dict(width=2, color=MISSING_COLOR))))
-    fig.update_layout(height=360, margin=dict(l=10, r=10, t=30, b=10), hovermode="x unified",
-                      legend=dict(orientation="h", y=1.08, x=0), showlegend=len(fig.data) > 1)
+                                 marker=dict(color=p["warn"], symbol="x-thin-open", size=10,
+                                             line=dict(width=2, color=p["warn"]))))
+    fig.update_layout(**theme.plotly_layout(), showlegend=len(fig.data) > 1)
     st.markdown(f"**{title}**")
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(fig, width="stretch", theme=None)
 
 
 def series_title(state, suffix: str = "") -> str:

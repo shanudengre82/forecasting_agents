@@ -16,7 +16,8 @@ served as a Streamlit app that runs locally, in Docker, or on a Hugging Face Spa
 
 Deterministic tools (pandas/numpy) compute every fact and rule-based logic makes every decision.
 An LLM then explains what the result means, so the model never has to compute anything. You choose the LLM in
-the sidebar: a small local model on CPU (default `Qwen/Qwen2.5-0.5B-Instruct`, free, no token) or any chat model
+the sidebar. Locally, that is a small model running inside the app on CPU (default `Qwen/Qwen2.5-0.5B-Instruct`) or
+a model you serve yourself with Ollama, vLLM or LM Studio. On the Hugging Face Space you can also use any chat model
 served by [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers), called with
 **your own** Hugging Face token (see [Language model & tokens](#language-model--tokens)). The app's **Agents** page shows the same
 catalogue as below.
@@ -187,7 +188,7 @@ Two image variants are built from one multi-stage `Dockerfile`:
 | Target | Contents | Use it for |
 |---|---|---|
 | `full` (default) | App + CPU PyTorch + transformers, with `Qwen2.5-0.5B-Instruct` baked in | The complete demo with LLM explanations |
-| `lite` | App only, no PyTorch (`USE_LLM=0`, `LLM_BACKEND=api`) | A small, fast image: rule-based summaries, or a hosted LLM with your token |
+| `lite` | App only, no PyTorch (`USE_LLM=0`, `LLM_BACKEND=server`) | A small, fast image: rule-based summaries, or your own LLM server |
 
 ```bash
 # full image
@@ -209,7 +210,9 @@ scripts/container_smoke_test.sh lite             # or: full
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `LLM_BACKEND` | `local` (`api` in lite) | Backend selected when the app opens: `local` (CPU model) or `api` (Inference Providers, user's token) |
+| `LLM_BACKEND` | `local` (`server` in lite) | Backend selected when the app opens: `local` (in-app CPU model), `server` (your LLM server; not on a Space) or `api` (Inference Providers with the user's token; Space only) |
+| `LOCAL_LLM_URL` | `http://localhost:11434/v1` (`http://host.docker.internal:11434/v1` in Docker) | OpenAI-compatible server for the `server` backend |
+| `LOCAL_LLM_MODEL` | `qwen2.5:0.5b` | Model picked first on that server, if it has it |
 | `MODEL_ID` | `Qwen/Qwen2.5-0.5B-Instruct` | Default local model. Others typed in the sidebar download on first use into `/home/user/.cache/huggingface`. |
 | `HF_API_MODEL` | `Qwen/Qwen2.5-7B-Instruct` | Default hosted model for the `api` backend; users can type any other model id |
 | `USE_LLM` | `1` (`0` in lite) | Whether the "Use an LLM" toggle starts on |
@@ -223,10 +226,23 @@ The same image runs unchanged as a Hugging Face Docker Space; the frontmatter ab
 
 ## Language model & tokens
 
-| Backend | Model | Token | Cost |
+Which backends the sidebar offers depends on where the app runs. The app detects a Space by the `SPACE_ID`
+variable that Hugging Face sets.
+
+| Backend | Where | Model | Token |
 |---|---|---|---|
-| Local (CPU, free) | Any public chat model id (default `MODEL_ID`) | None. Downloads are made with `token=False`, so a host token is never sent | Runs on the machine/Space CPU |
-| Hugging Face API (your token) | Any model id served by Inference Providers (default `HF_API_MODEL`), plus a provider (`auto` by default) | The visitor pastes their own token in the sidebar | Billed to the visitor's HF account |
+| Local model (in-app, CPU) | Everywhere | Any public chat model id (default `MODEL_ID`) | None. Downloads use `token=False`, so a host token is never sent |
+| Local LLM server | Local runs only | Any model your Ollama, vLLM or LM Studio server lists at `LOCAL_LLM_URL` | None. A dummy key is sent, never `HF_TOKEN` |
+| Hugging Face API | Hugging Face Space only | Any model served by Inference Providers (default `HF_API_MODEL`), plus a provider | The visitor's own token, billed to their HF account |
+
+Local runs never show a token field. The server option is left out on the Space, because a URL field on a public
+app would let visitors make the server call any host.
+
+**Use Ollama locally:**
+```bash
+ollama pull qwen2.5:0.5b          # any model works; the sidebar lists what the server has
+uv run streamlit run app.py       # then pick “Local LLM server” in the sidebar
+```
 
 **Tokens always belong to the user, never to the app.** The hosted backend is built only from the token typed into the
 sidebar. It never reads `HF_TOKEN`, a cached `hf auth login` or a Space secret, so if no token is pasted, the app
@@ -270,7 +286,7 @@ src/fcagents/chat/           page chat: rule parser, validated LLM router, stats
 src/fcagents/tools/          deterministic tools (time_index, frequency, resample, missing)
 src/fcagents/agents/         one agent per pipeline step, each carrying its own catalogue metadata
 src/fcagents/core/           BaseAgent / AgentResult / PipelineState
-src/fcagents/llm/            LLM backends (transformers on CPU, HF Inference Providers with the user's token, or none)
+src/fcagents/llm/            LLM backends (in-app CPU model, local OpenAI-compatible server, HF Inference Providers with the user's token, or none)
 src/fcagents/orchestrator.py stages (one per page), pipeline order and routing
 src/fcagents/catalog.py      agent catalogue: app tab, README section, flow diagram
 scripts/                     sample generator, README renderer, container smoke test

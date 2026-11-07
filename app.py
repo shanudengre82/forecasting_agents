@@ -13,16 +13,19 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from fcagents import ui  # noqa: E402
+from fcagents import theme, ui  # noqa: E402
 from fcagents.llm.backend import (  # noqa: E402
-    API_PROVIDERS, DEFAULT_API_MODEL, DEFAULT_BACKEND, DEFAULT_MODEL_ID, NullBackend,
+    API_PROVIDERS, DEFAULT_API_MODEL, DEFAULT_BACKEND, DEFAULT_MODEL_ID, DEFAULT_SERVER_MODEL, DEFAULT_SERVER_URL,
+    NullBackend, list_server_models, on_hf_space,
 )
 
 SAMPLES = ROOT / "data" / "samples"
-BACKENDS = {"local": "Local (CPU, free)", "api": "Hugging Face API (your token)"}
+BACKEND_LABELS = {"local": "Local model (in-app, CPU)", "server": "Local LLM server (Ollama, vLLM, LM Studio)",
+                  "api": "Hugging Face API (your token)"}
 TOKEN_URL = "https://huggingface.co/settings/tokens"
 
-st.set_page_config(page_title="Forecasting Agents", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Forecasting Agents", page_icon=":material/monitoring:", layout="wide")
+theme.inject_css()
 
 
 @st.cache_resource(show_spinner="Loading language model (first run downloads it)…")
@@ -36,6 +39,25 @@ def load_llm(model_id: str):
 @st.cache_data
 def read_csv(source) -> pd.DataFrame:
     return pd.read_csv(source)
+
+
+def backends() -> list[str]:
+    """Local runs serve every model locally; only a Hugging Face Space offers hosted models with the user's token."""
+    return ["local", "api"] if on_hf_space() else ["local", "server"]
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def server_models(base_url: str) -> list[str]:
+    return list_server_models(base_url)
+
+
+def server_llm(base_url: str, model_id: str):
+    from fcagents.llm.backend import LocalServerBackend
+
+    key, ss = (base_url, model_id), st.session_state
+    if ss.get("_server_llm_key") != key:
+        ss["_server_llm"], ss["_server_llm_key"] = LocalServerBackend(base_url, model_id), key
+    return ss["_server_llm"]
 
 
 def api_llm(model_id: str, provider: str, token: str):
@@ -60,9 +82,9 @@ def language_model():
                              "the LLM never makes a decision.")
     llm = NullBackend()
     if use_llm:
-        keys, default = list(BACKENDS), os.environ.get("LLM_BACKEND", DEFAULT_BACKEND)
+        keys, default = backends(), os.environ.get("LLM_BACKEND", DEFAULT_BACKEND)
         kind = st.radio("Backend", keys, index=keys.index(default) if default in keys else 0,
-                        format_func=BACKENDS.get)
+                        format_func=BACKEND_LABELS.get)
         if kind == "local":
             model_id = st.text_input("Model", value=DEFAULT_MODEL_ID, key="local_model",
                                      help="Any public Hugging Face chat model that fits on CPU, e.g. "
@@ -71,7 +93,25 @@ def language_model():
                 llm = load_llm(model_id)
             except Exception as e:  # missing torch, no network, OOM…
                 st.error(f"Could not load {model_id}: {e}. Falling back to rule-based summaries.")
-        else:
+        elif kind == "server":
+            url = st.text_input("Server URL", value=DEFAULT_SERVER_URL, key="server_url",
+                                help="OpenAI-compatible endpoint. Ollama: http://localhost:11434/v1, "
+                                     "LM Studio: http://localhost:1234/v1, vLLM: http://localhost:8000/v1.").strip()
+            models = server_models(url)
+            if models:
+                default_model = os.environ.get("LOCAL_LLM_MODEL", DEFAULT_SERVER_MODEL)
+                model_id = st.selectbox("Model", models, key="server_model",
+                                        index=models.index(default_model) if default_model in models else 0)
+            else:
+                st.warning(f"Can't reach an LLM server at {url}. Start Ollama, vLLM or LM Studio, or check the "
+                           "URL. Until then, agents use rule-based summaries.")
+                model_id = ""
+            if model_id:
+                try:
+                    llm = server_llm(url, model_id)
+                except Exception as e:
+                    st.error(f"Could not set up {model_id}: {e}. Falling back to rule-based summaries.")
+        elif on_hf_space():  # hosted models with the visitor's own token exist only on the Space
             model_id = st.text_input("Model", value=DEFAULT_API_MODEL, key="api_model",
                                      help="Any chat model served by Hugging Face Inference Providers, "
                                           "e.g. meta-llama/Llama-3.1-8B-Instruct.").strip()
@@ -110,14 +150,14 @@ with st.sidebar:
     st.divider()
     df, key = data_source()
     st.divider()
-    st.caption("Deterministic tools compute the facts → rules decide → the LLM explains.")
+    st.caption("Tools compute the facts, rules make the decisions, and the language model explains them.")
 ui.set_app(df, key, llm)
 
 nav = st.navigation([
-    st.Page("views/data.py", title="1 · Data", icon="🗂️", default=True),
-    st.Page("views/resampling.py", title="2 · Resampling", icon="⏱️"),
-    st.Page("views/missing.py", title="3 · Missing values", icon="🩹"),
-    st.Page("views/agents.py", title="Agents", icon="🧩"),
+    st.Page("views/data.py", title="1. Data", icon=":material/table_chart:", default=True),
+    st.Page("views/resampling.py", title="2. Resampling", icon=":material/timer:"),
+    st.Page("views/missing.py", title="3. Missing values", icon=":material/healing:"),
+    st.Page("views/agents.py", title="Agents", icon=":material/account_tree:"),
 ], position="top")
-st.title("📈 Forecasting Agents")
+st.html('<p class="fc-brand">Forecasting Agents</p>')
 nav.run()

@@ -1,5 +1,5 @@
 # docker compose up -d                          → full app (LLM) on http://localhost:7860
-# docker compose --profile lite up -d app-lite  → lite app (no LLM) on http://localhost:7861
+# docker compose --profile lite up -d app-lite  → lite app (no PyTorch; your own LLM server) on http://localhost:7861
 services:
   app:
     build:
@@ -12,7 +12,10 @@ services:
       MODEL_ID: ${MODEL_ID:-Qwen/Qwen2.5-0.5B-Instruct}
       USE_LLM: ${USE_LLM:-1}
       LLM_BACKEND: ${LLM_BACKEND:-local}
-      HF_API_MODEL: ${HF_API_MODEL:-Qwen/Qwen2.5-7B-Instruct}
+      LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://host.docker.internal:11434/v1}  # e.g. Ollama on the host
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:0.5b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # lets the container reach a server on the host (Linux)
     volumes:
       - hf-cache:/home/user/.cache/huggingface  # keeps models picked at runtime (e.g. 1.5B)
     restart: unless-stopped
@@ -25,6 +28,11 @@ services:
     image: fcagents:lite
     ports:
       - "7861:7860"
+    environment:
+      LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://host.docker.internal:11434/v1}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:0.5b}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 volumes:
