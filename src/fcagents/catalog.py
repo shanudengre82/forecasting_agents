@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fcagents.orchestrator import PIPELINE
+from fcagents.orchestrator import PIPELINE, STAGE_TITLES, STAGES
 
 PRINCIPLE = ("Deterministic tools compute every fact → rules make every decision → a small LLM only explains. "
              "No routing decision ever depends on LLM output.")
@@ -13,12 +13,13 @@ EDGES = [
     ("data", "time_index", ""),
     ("time_index", "regularity", "found / ambiguous"),
     ("time_index", STOP, "not_found"),
-    ("regularity", "resampling", "irregular"),
+    ("regularity", "resampling", "irregular / you pick a frequency"),
     ("regularity", "frequency", "regular / with gaps"),
     ("regularity", STOP, "insufficient_data"),
     ("resampling", "frequency", "resampled / sparse"),
     ("resampling", STOP, "too_few_points"),
-    ("frequency", NEXT, ""),
+    ("frequency", "missing_values", ""),
+    ("missing_values", NEXT, ""),
 ]
 
 
@@ -28,9 +29,11 @@ def _labels() -> dict[str, str]:
 
 
 def agent_catalog() -> list[dict]:
+    page = {a.name: STAGE_TITLES[s] for s, agents in STAGES.items() for a in agents}
     return [
         {
             "step": i,
+            "page": page[a.name],
             "name": a.name,
             "title": a.title,
             "summary": a.summary,
@@ -78,6 +81,7 @@ def catalog_markdown() -> str:
             "",
             "| Property | Details |",
             "|---|---|",
+            f"| Page | {a['page']} |",
             f"| Runs when | {a['runs_when']} |",
             f"| Inputs | {_cell(a['inputs'])} |",
             f"| Outputs | {_cell(a['outputs'])} |",

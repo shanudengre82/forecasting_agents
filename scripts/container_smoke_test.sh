@@ -39,13 +39,13 @@ import pandas as pd
 from fcagents.orchestrator import run_pipeline
 
 expected = {  # sample -> {agent: decision}
-    "hourly_energy.csv": {"frequency": "h"},
-    "15min_with_duplicates.csv": {"frequency": "15min"},
-    "daily_sales_with_gaps.csv": {"regularity": "regular_with_gaps", "frequency": "D"},
-    "business_day_stock.csv": {"frequency": "B"},
-    "monthly_passengers.csv": {"frequency": "MS"},
-    "multi_store_long.csv": {"frequency": "D"},
-    "irregular_sensor.csv": {"regularity": "irregular", "resampling": "resampled"},
+    "hourly_energy.csv": {"frequency": "h", "missing_values": "complete"},
+    "15min_with_duplicates.csv": {"frequency": "15min", "missing_values": "complete"},
+    "daily_sales_with_gaps.csv": {"regularity": "regular_with_gaps", "frequency": "D", "missing_values": "filled"},
+    "business_day_stock.csv": {"frequency": "B", "missing_values": "complete"},
+    "monthly_passengers.csv": {"frequency": "MS", "missing_values": "complete"},
+    "multi_store_long.csv": {"frequency": "D", "missing_values": "complete"},
+    "irregular_sensor.csv": {"regularity": "irregular", "resampling": "resampled", "missing_values": "filled"},
 }
 failures = 0
 for name, exp in expected.items():
@@ -54,7 +54,7 @@ for name, exp in expected.items():
     failures += not ok
     print(f"    {'ok ' if ok else 'BAD'} {name}: {got}")
 weekly = {r.agent: r.decision for r, _ in run_pipeline(pd.read_csv("data/samples/irregular_sensor.csv"), resample_freq="W")}
-ok = weekly["resampling"] == "too_few_points" and weekly["frequency"] == "skipped"
+ok = weekly["resampling"] == "too_few_points" and weekly["missing_values"] == "skipped"
 failures += not ok
 print(f"    {'ok ' if ok else 'BAD'} irregular_sensor.csv @W -> too_few_points warning")
 raise SystemExit(failures)

@@ -18,7 +18,6 @@ FREQ_OPTIONS = {  # ordered fine → coarse
     "W": "weekly",
 }
 AGGREGATIONS = ["mean", "sum", "median", "min", "max", "first", "last", "count"]
-FILL_METHODS = {"none": "leave missing", "ffill": "forward fill", "interpolate": "interpolate", "zero": "zero"}
 
 MIN_FREQ = pd.Timedelta(hours=1)
 MAX_FREQ = pd.Timedelta(weeks=1)
@@ -84,12 +83,12 @@ def recommend_freq(options: list[dict]) -> str:
     return options[0]["freq"]
 
 
-def resample_series(series: pd.Series, freq: str, agg: str = "mean", fill: str = "none") -> tuple[pd.Series, dict]:
+def resample_series(series: pd.Series, freq: str, agg: str = "mean") -> tuple[pd.Series, dict]:
+    """Aggregate ``series`` into ``freq`` bins. Empty bins are dropped: they surface as missing timestamps,
+    which the Missing Values agent fills."""
     validate_freq(freq)
     if agg not in AGGREGATIONS:
         raise ValueError(f"Unknown aggregation '{agg}'")
-    if fill not in FILL_METHODS:
-        raise ValueError(f"Unknown fill method '{fill}'")
 
     s = series[series.index.notna()].sort_index()
     agg = _effective_agg(s, agg)
@@ -98,21 +97,13 @@ def resample_series(series: pd.Series, freq: str, agg: str = "mean", fill: str =
     out = counts.astype(float) if agg == "count" else _bins(s, freq).agg(agg)
 
     n_bins, n_points = len(out), int(has_data.sum())
-    if fill == "none":
-        out = out[has_data]
-    elif fill == "ffill":
-        out = out.where(has_data).ffill()
-    elif fill == "interpolate":
-        out = out.where(has_data).interpolate(method="time")
-    elif fill == "zero":
-        out = out.where(has_data).fillna(0.0)
+    out = out[has_data]
     out.name = series.name
 
     return out, {
         "freq": freq,
         "label": FREQ_OPTIONS.get(freq, freq),
         "agg": agg,
-        "fill": fill,
         "n_input": int(len(s)),
         "n_bins": n_bins,
         "n_points": n_points,

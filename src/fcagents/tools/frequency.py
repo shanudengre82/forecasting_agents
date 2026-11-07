@@ -179,6 +179,11 @@ def _label_and_periods(alias: str) -> tuple[str, list[int]]:
     return label, periods
 
 
+def frequency_label(alias: str) -> tuple[str, list[int]]:
+    """Plain-language label and candidate seasonal periods for a pandas alias, e.g. 'D' -> ('daily', [7, 365])."""
+    return _label_and_periods(alias)
+
+
 def describe_frequency(index, alias: str, max_gaps: int = 5) -> dict:
     """Describe a known frequency: human label, seasonal periods, missing timestamps and gap runs."""
     idx, _ = _clean_index(index)
@@ -208,4 +213,4 @@ def describe_frequency(index, alias: str, max_gaps: int = 5) -> dict:
     }
 
 
-__all__ = ["analyze_regularity", "describe_frequency", "MIN_ON_GRID", "MIN_COVERAGE"]
+__all__ = ["analyze_regularity", "describe_frequency", "frequency_label", "MIN_ON_GRID", "MIN_COVERAGE"]
