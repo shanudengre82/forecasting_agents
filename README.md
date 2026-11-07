@@ -15,9 +15,45 @@ A demo of LLM-assisted agents that together form an end-to-end time series forec
 served as a Streamlit app that runs locally, in Docker, or on a Hugging Face Space.
 
 Deterministic tools (pandas/numpy) compute every fact and rule-based logic makes every decision.
-A small LLM (default `Qwen/Qwen2.5-0.5B-Instruct`, CPU) then explains what the result means,
-so a tiny model never has to compute anything. The app's **Agents** tab shows the same
+An LLM then explains what the result means, so the model never has to compute anything. You choose the LLM in
+the sidebar: a small local model on CPU (default `Qwen/Qwen2.5-0.5B-Instruct`, free, no token) or any chat model
+served by [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers), called with
+**your own** Hugging Face token (see [Language model & tokens](#language-model--tokens)). The app's **Agents** page shows the same
 catalogue as below.
+
+## Pages & chat
+
+The language model and the data source sit at the top of the sidebar. The pipeline runs as one page per step,
+with Back/Next buttons and a step bar that shows each step's status:
+
+| Page | Agents | What you can change |
+|---|---|---|
+| 1 · Data | Time Index, Regularity | time column, target column, series (long format) |
+| 2 · Resampling | Resampling, Frequency | target frequency (1h – 1W), aggregation per bin |
+| 3 · Missing values | Missing Values | fill method; download the prepared series as CSV |
+| Agents | — | the catalogue below |
+
+Each page opens with a **chat**. You can type a change instead of using the controls, or ask about the series:
+
+| Page | Example prompts |
+|---|---|
+| Data | “use temp as the target”, “switch to store_2”, “how many points are there?” |
+| Resampling | “resample to 6 hours with sum”, “daily, max per day”, “what is the mean?” |
+| Missing values | “fill gaps by interpolation”, “use seasonal filling”, “how many values were filled?” |
+
+The chat keeps to the same principle as the agents:
+
+1. **Rules first.** A rule parser maps the prompt to the page's settings.
+2. **LLM proposals are checked and confirmed.** Only if the rules find nothing, the LLM proposes a JSON setting
+   change. It is kept only if it names a setting of this page and one of its allowed values (a frequency outside
+   1h – 1W is refused). A 0.5B model can still misread the intent, so the proposal waits for you to click
+   **Apply** or **Dismiss**.
+3. **Answers come from computed facts.** Common questions (points, missing values, mean, min/max, start/end,
+   frequency) get a template answer from computed stats. Other questions are phrased by the LLM from those stats and
+   the page's agent facts only. Without an LLM, the stats are shown as a table.
+
+Every reply says whether it came from the rules or the LLM. A setting changed in chat updates the page's controls,
+re-runs that step and is kept when you switch pages.
 
 ## Agents
 
@@ -33,17 +69,19 @@ flowchart LR
   regularity["Regularity Agent"]
   resampling["Resampling Agent"]
   frequency["Frequency Agent"]
+  missing_values["Missing Values Agent"]
   stop["Stop & ask user"]
   next["Next agents (planned)"]
   data --> time_index
   time_index -->|found / ambiguous| regularity
   time_index -->|not_found| stop
-  regularity -->|irregular| resampling
+  regularity -->|irregular / you pick a frequency| resampling
   regularity -->|regular / with gaps| frequency
   regularity -->|insufficient_data| stop
   resampling -->|resampled / sparse| frequency
   resampling -->|too_few_points| stop
-  frequency --> next
+  frequency --> missing_values
+  missing_values --> next
 ```
 
 ### 1. Time Index Agent
@@ -52,6 +90,7 @@ Finds the column that holds the timestamps, the numeric column to forecast and, 
 
 | Property | Details |
 |---|---|
+| Page | Data |
 | Runs when | Always (first agent). |
 | Inputs | Uploaded or sample CSV (any column names) |
 | Outputs | Time column and how it was parsed (ISO, day-first, epoch s/ms, YYYYMMDD, mixed)<br>Ranked time-column candidates with parse rate and score<br>Target column<br>Series-id column and number of series (long format) |
@@ -70,6 +109,7 @@ Checks whether the timestamps follow a fixed frequency, including calendar frequ
 
 | Property | Details |
 |---|---|
+| Page | Data |
 | Runs when | After a time column is found. |
 | Inputs | Parsed timestamps of one series |
 | Outputs | Status and detected frequency alias<br>Coverage and share of timestamps on the grid<br>Missing-timestamp count, duplicate count, largest gap<br>Spacing statistics (min/median/max delta) |
@@ -85,14 +125,15 @@ Checks whether the timestamps follow a fixed frequency, including calendar frequ
 
 ### 3. Resampling Agent
 
-Converts irregularly spaced observations into a fixed-frequency series between 1 hour and 1 week, using your choice of frequency, aggregation and empty-bin handling.
+Converts irregularly spaced observations into a fixed-frequency series between 1 hour and 1 week, using your choice of frequency and aggregation. Empty bins are left as missing timestamps for the Missing Values agent.
 
 | Property | Details |
 |---|---|
-| Runs when | Only when the Regularity agent says the series is irregular. |
-| Inputs | Irregular series<br>Your resampling preferences (sidebar) |
-| Outputs | Chosen frequency and whether it was yours or auto-recommended<br>Data points, bins and empty-bin share for every candidate frequency<br>The resampled series (replaces the raw one for later agents) |
-| User controls | Target frequency: auto or h, 2h, 3h, 4h, 6h, 12h, D, 2D, 3D, W<br>Aggregation: mean, sum, median, min, max, first, last, count<br>Empty bins: leave missing, forward fill, interpolate, zero |
+| Page | Resampling |
+| Runs when | When the Regularity agent says the series is irregular, or when you pick a frequency for a regular series (e.g. aggregate hourly data to daily). |
+| Inputs | Series from the Data page<br>Your resampling preferences (page controls or chat) |
+| Outputs | Chosen frequency and whether it was yours or auto-recommended<br>Data points, bins and empty-bin share for every candidate frequency<br>The resampled series, empty bins dropped (replaces the raw one for later agents) |
+| User controls | Target frequency: auto or h, 2h, 3h, 4h, 6h, 12h, D, 2D, 3D, W (controls or chat)<br>Aggregation: mean, sum, median, min, max, first, last, count (controls or chat) |
 | Tools | `tools.resample.resample_options`<br>`tools.resample.recommend_freq`<br>`tools.resample.resample_series` |
 
 | Decision | Meaning |
@@ -107,6 +148,7 @@ Names the sampling frequency in plain words and as a pandas alias, lists missing
 
 | Property | Details |
 |---|---|
+| Page | Resampling |
 | Runs when | When a fixed frequency is known (detected by Regularity or produced by Resampling). |
 | Inputs | Series with a known fixed frequency |
 | Outputs | Pandas alias and label (e.g. 'h' / hourly)<br>Expected vs observed points and coverage<br>Longest gap runs and a sample of missing timestamps<br>Candidate seasonal periods (e.g. hourly: 24, 168) |
@@ -116,6 +158,26 @@ Names the sampling frequency in plain words and as a pandas alias, lists missing
 | Decision | Meaning |
 |---|---|
 | `<alias>` | The pandas frequency alias, e.g. h, D, B, W-SUN, MS, QS-JAN. The status is a warning if timestamps are missing. |
+
+### 5. Missing Values Agent
+
+Puts the series on its complete fixed-frequency grid, counts missing timestamps and empty values, and fills them with your chosen method or a rule-based recommendation.
+
+| Property | Details |
+|---|---|
+| Page | Missing values |
+| Runs when | When a fixed frequency is known and the series has values (after the Frequency agent). |
+| Inputs | Fixed-frequency series (regular, or resampled with empty bins dropped)<br>Your fill method (page control or chat) |
+| Outputs | Missing timestamps, missing values and the share of the grid they cover<br>Longest gap runs, duplicates merged, off-grid timestamps dropped<br>Fill method and whether it was yours or auto-recommended<br>The complete, filled series (replaces the previous one for later agents) |
+| User controls | Fill method: auto, leave missing, forward fill, backward fill, interpolate in time, zero, seasonal naive (value one season earlier) (control or chat) |
+| Tools | `tools.missing.missing_report`<br>`tools.missing.recommend_fill`<br>`tools.missing.fill_missing` |
+
+| Decision | Meaning |
+|---|---|
+| `complete` | Nothing is missing; the series is ready as is. |
+| `filled` | Every missing value was filled. |
+| `long_gaps` | Filled, but a gap is longer than one season (or 24 steps) or over 30% of the grid was missing, so the filled values are guesswork. |
+| `left_missing` | Some values are still missing (method 'leave missing'); most forecasting models need a complete series. |
 <!-- AGENTS:END -->
 
 ## Run with Docker
@@ -125,7 +187,7 @@ Two image variants are built from one multi-stage `Dockerfile`:
 | Target | Contents | Use it for |
 |---|---|---|
 | `full` (default) | App + CPU PyTorch + transformers, with `Qwen2.5-0.5B-Instruct` baked in | The complete demo with LLM explanations |
-| `lite` | App only, no PyTorch (`USE_LLM=0`) | A small, fast image with rule-based summaries only |
+| `lite` | App only, no PyTorch (`USE_LLM=0`, `LLM_BACKEND=api`) | A small, fast image: rule-based summaries, or a hosted LLM with your token |
 
 ```bash
 # full image
@@ -147,8 +209,10 @@ scripts/container_smoke_test.sh lite             # or: full
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `MODEL_ID` | `Qwen/Qwen2.5-0.5B-Instruct` | Default LLM. Other models download on first use into `/home/user/.cache/huggingface`. |
-| `USE_LLM` | `1` (`0` in lite) | Whether the "Explain with an LLM" toggle starts on |
+| `LLM_BACKEND` | `local` (`api` in lite) | Backend selected when the app opens: `local` (CPU model) or `api` (Inference Providers, user's token) |
+| `MODEL_ID` | `Qwen/Qwen2.5-0.5B-Instruct` | Default local model. Others typed in the sidebar download on first use into `/home/user/.cache/huggingface`. |
+| `HF_API_MODEL` | `Qwen/Qwen2.5-7B-Instruct` | Default hosted model for the `api` backend; users can type any other model id |
+| `USE_LLM` | `1` (`0` in lite) | Whether the "Use an LLM" toggle starts on |
 | `STREAMLIT_SERVER_PORT` | `7860` | Port the app listens on inside the container |
 | `PORT` (compose only) | `7860` | Host port mapped to the full service |
 
@@ -156,6 +220,36 @@ Build arg `PRELOAD_MODEL` chooses which model is baked into the `full` image,
 for example `--build-arg PRELOAD_MODEL=Qwen/Qwen2.5-1.5B-Instruct`.
 The container runs as uid 1000 and exposes a Docker `HEALTHCHECK` on `/_stcore/health`.
 The same image runs unchanged as a Hugging Face Docker Space; the frontmatter above sets `app_port: 7860`.
+
+## Language model & tokens
+
+| Backend | Model | Token | Cost |
+|---|---|---|---|
+| Local (CPU, free) | Any public chat model id (default `MODEL_ID`) | None. Downloads are made with `token=False`, so a host token is never sent | Runs on the machine/Space CPU |
+| Hugging Face API (your token) | Any model id served by Inference Providers (default `HF_API_MODEL`), plus a provider (`auto` by default) | The visitor pastes their own token in the sidebar | Billed to the visitor's HF account |
+
+**Tokens always belong to the user, never to the app.** The hosted backend is built only from the token typed into the
+sidebar. It never reads `HF_TOKEN`, a cached `hf auth login` or a Space secret, so if no token is pasted, the app
+falls back to rule-based summaries. The token is kept in that browser session's state only. It is not written to
+disk, logs, env vars or the cache shared between visitors, and it is masked in error messages.
+
+To get a token, open <https://huggingface.co/settings/tokens>, create a **fine-grained** token, and tick
+**“Make calls to Inference Providers”**.
+
+## Deploy to a Hugging Face Space
+
+1. Create a new Space at <https://huggingface.co/new-space> and choose the **Docker** SDK (blank template). The
+   frontmatter at the top of this README configures it (`sdk: docker`, `app_port: 7860`).
+2. Push this repository to it:
+   ```bash
+   git remote add space https://huggingface.co/spaces/<your-user>/<space-name>
+   git push space main          # authenticate with your HF username + a write token
+   ```
+   The Space builds the `full` stage (the last one in the `Dockerfile`), so the local model is baked in.
+3. Optional: under *Settings → Variables*, set `LLM_BACKEND`, `HF_API_MODEL`, `MODEL_ID` or `USE_LLM`.
+   These are plain **variables**. **Do not add an `HF_TOKEN` secret.** The app ignores it for LLM calls by design,
+   because every visitor uses their own token.
+4. Open the Space, choose **Hugging Face API (your token)** in the sidebar, enter a model id and paste your token.
 
 ## Run locally
 
@@ -169,12 +263,15 @@ uv run pytest -m slow                    # also loads the real LLM
 ## Layout
 
 ```
-app.py                       Streamlit UI (rendering only): "Run pipeline" and "Agents" tabs
-src/fcagents/tools/          deterministic tools (time_index, frequency, resample)
+app.py                       Streamlit entry: sidebar (language model, data) and page navigation
+views/                       one file per page: data, resampling, missing, agents
+src/fcagents/ui.py           shared page helpers: stage caching, chat panel, result cards, charts
+src/fcagents/chat/           page chat: rule parser, validated LLM router, stats-grounded answers
+src/fcagents/tools/          deterministic tools (time_index, frequency, resample, missing)
 src/fcagents/agents/         one agent per pipeline step, each carrying its own catalogue metadata
 src/fcagents/core/           BaseAgent / AgentResult / PipelineState
-src/fcagents/llm/            LLM backends (transformers on CPU, or none)
-src/fcagents/orchestrator.py pipeline order and routing
+src/fcagents/llm/            LLM backends (transformers on CPU, HF Inference Providers with the user's token, or none)
+src/fcagents/orchestrator.py stages (one per page), pipeline order and routing
 src/fcagents/catalog.py      agent catalogue: app tab, README section, flow diagram
 scripts/                     sample generator, README renderer, container smoke test
 ```
@@ -188,7 +285,8 @@ Subclass `BaseAgent`, then:
 3. Optionally implement `prompt_facts(facts)` to trim what the LLM sees.
 4. Fill in the catalogue metadata: `summary`, `runs_when`, `inputs`, `outputs`, `decisions`, `user_controls`, `tools`.
 
-Add the agent to `PIPELINE` in the orchestrator. Override `applies(state)` if it only runs in some
+Add the agent to a stage in `STAGES` in the orchestrator (a new stage also needs a page in `views/`,
+its settings in `chat/actions.py` and its words in `chat/parser.py`). Override `applies(state)` if it only runs in some
 situations, and add a routing rule if it can stop the pipeline. Add its edges to `EDGES` in
 `catalog.py`, then run `uv run python scripts/render_agents_md.py` to refresh this README.
 A test fails if the README is out of date.

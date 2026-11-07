@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 # Forecasting Agents: Streamlit app, CPU-only. Runs on plain Docker, docker compose and HF Docker Spaces.
 #   docker build -t fcagents .                      # full: app + PyTorch + baked-in Qwen2.5-0.5B
-#   docker build --target lite -t fcagents:lite .   # lite: app only, rule-based summaries
+#   docker build --target lite -t fcagents:lite .   # lite: no PyTorch; rule summaries or hosted LLM (user token)
+# HF Docker Spaces build the last stage (full). Visitors can still switch to a hosted model with their own token.
 
 FROM python:3.12-slim AS base
 COPY --from=ghcr.io/astral-sh/uv:0.12.21 /uv /usr/local/bin/uv
@@ -24,7 +25,11 @@ ENV HOME=/home/user \
     STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
     # XSRF/CORS off: required for st.file_uploader inside the HF Spaces iframe.
     STREAMLIT_SERVER_ENABLE_CORS=false \
-    STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false
+    STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=false \
+    # LLM choice (plain Space *Variables*, not secrets). The hosted backend is paid for with the token each
+    # visitor pastes in the sidebar; the app never uses HF_TOKEN for LLM calls, so don't set one.
+    LLM_BACKEND=local \
+    HF_API_MODEL=Qwen/Qwen2.5-7B-Instruct
 
 COPY --chown=user pyproject.toml uv.lock README.md ./
 
@@ -34,7 +39,8 @@ CMD ["streamlit", "run", "app.py"]
 
 
 FROM base AS lite
-ENV USE_LLM=0
+# No PyTorch here: only the hosted backend (visitor's own token) is available, and it starts switched off.
+ENV USE_LLM=0 LLM_BACKEND=api
 RUN --mount=type=cache,target=/home/user/.cache/uv,uid=1000 \
     uv sync --frozen --no-dev --no-install-project
 COPY --chown=user . .

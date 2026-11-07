@@ -34,37 +34,34 @@ def test_all_options_valid(good):
 def test_mean_and_sum():
     idx = pd.to_datetime(["2024-01-01 00:10", "2024-01-01 00:50", "2024-01-01 01:30", "2024-01-01 03:05"])
     s = pd.Series([1.0, 3.0, 10.0, 7.0], index=idx)
-    mean, facts = resample_series(s, "h", "mean", "none")
+    mean, facts = resample_series(s, "h", "mean")
     assert mean.loc["2024-01-01 00:00"] == 2.0
     assert mean.loc["2024-01-01 01:00"] == 10.0
     assert pd.Timestamp("2024-01-01 02:00") not in mean.index  # empty bin dropped
     assert facts["n_bins"] == 4 and facts["n_points"] == 3 and facts["n_empty"] == 1
-    total, _ = resample_series(s, "h", "sum", "none")
+    total, _ = resample_series(s, "h", "sum")
     assert total.loc["2024-01-01 00:00"] == 4.0
 
 
 def test_count_without_target():
     s = _irregular(days=2, n=100, values=False)
-    out, facts = resample_series(s, "6h", "count", "none")
+    out, facts = resample_series(s, "6h", "count")
     assert facts["agg"] == "count"
     assert out.sum() == 100
 
 
 def test_nan_values_force_count():
     s = _irregular(days=2, n=50, values=False)
-    _, facts = resample_series(s, "6h", "mean", "none")
+    _, facts = resample_series(s, "6h", "mean")
     assert facts["agg"] == "count"
 
 
-@pytest.mark.parametrize("fill", ["ffill", "interpolate", "zero"])
-def test_fill_methods_keep_full_grid(fill):
+def test_empty_bins_are_dropped():
     idx = pd.to_datetime(["2024-01-01 00:00", "2024-01-01 03:00", "2024-01-01 04:00"])
     s = pd.Series([1.0, 4.0, 5.0], index=idx)
-    out, facts = resample_series(s, "h", "mean", fill)
-    assert len(out) == 5 and out.notna().all()
-    assert facts["n_points"] == 3  # filled bins are not real data points
-    expected = {"ffill": 1.0, "interpolate": 2.0, "zero": 0.0}[fill]
-    assert out.loc["2024-01-01 01:00"] == expected
+    out, facts = resample_series(s, "h", "mean")
+    assert len(out) == 3 and out.notna().all()  # gaps are left for the Missing Values agent
+    assert facts["n_bins"] == 5 and facts["n_points"] == 3 and facts["n_empty"] == 2
 
 
 def test_options_and_recommendation():

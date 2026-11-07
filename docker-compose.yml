@@ -11,6 +11,8 @@ services:
     environment:
       MODEL_ID: ${MODEL_ID:-Qwen/Qwen2.5-0.5B-Instruct}
       USE_LLM: ${USE_LLM:-1}
+      LLM_BACKEND: ${LLM_BACKEND:-local}
+      HF_API_MODEL: ${HF_API_MODEL:-Qwen/Qwen2.5-7B-Instruct}
     volumes:
       - hf-cache:/home/user/.cache/huggingface  # keeps models picked at runtime (e.g. 1.5B)
     restart: unless-stopped
