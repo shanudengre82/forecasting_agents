@@ -15,6 +15,8 @@ from fcagents.llm.backend import LLMBackend, NullBackend
 HINTS = {
     "data": "Try: “use temp as the target”, “switch to store_2”, “how many points are there?”",
     "resampling": "Try: “resample to 6 hours with sum”, “daily, max per day”, “what is the mean?”",
+    "holidays": "Try: “use Germany”, “only California”, “include unofficial holidays”, “check 3 days around”",
+    "outliers": "Try: “apply the suggestions”, “remove all outliers”, “be more sensitive”, “keep all”",
     "missing": "Try: “fill gaps by interpolation”, “use seasonal filling”, “how many values were filled?”",
 }
 

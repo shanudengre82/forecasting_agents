@@ -14,6 +14,36 @@ def seasonal(n, period, amp=10.0, trend=0.05, noise=1.0, level=100.0):
     return level + trend * t + amp * np.sin(2 * np.pi * t / period) + rng.normal(0, noise, n)
 
 
+def holiday_sales() -> pd.DataFrame:
+    """Two years of US daily store sales: weekly pattern, holiday effects and six data-entry outliers.
+
+    Uses its own random generator so adding it leaves the other samples unchanged.
+    """
+    r = np.random.default_rng(2024)
+    idx = pd.date_range("2023-01-01", "2024-12-31", freq="D")
+    t = np.arange(len(idx))
+    weekly = np.array([0.95, 0.9, 0.92, 0.97, 1.08, 1.2, 1.0])[idx.dayofweek]
+    y = (200 + 0.08 * t) * weekly * r.normal(1, 0.04, len(idx))
+    effect = pd.Series(1.0, index=idx)
+    for year in (2023, 2024):
+        thanksgiving = pd.Timestamp(f"{year}-11-01") + pd.offsets.WeekOfMonth(week=3, weekday=3)
+        effect[thanksgiving] = 0.45                        # stores close early
+        effect[thanksgiving + pd.Timedelta(days=1)] = 2.1  # Black Friday
+        for d in range(1, 10):                             # Christmas shopping run-up
+            effect[pd.Timestamp(f"{year}-12-24") - pd.Timedelta(days=d)] = 1 + 0.06 * (10 - d)
+        effect[pd.Timestamp(f"{year}-12-24")] = 1.5
+        effect[pd.Timestamp(f"{year}-12-25")] = 0.15        # closed
+        effect[pd.Timestamp(f"{year}-01-01")] = 0.3
+        effect[pd.Timestamp(f"{year}-07-04")] = 1.4
+        effect[pd.Timestamp(f"{year}-05-01") + pd.offsets.LastWeekOfMonth(weekday=0)] = 1.35  # Memorial Day
+        effect[pd.Timestamp(f"{year}-09-01") + pd.offsets.WeekOfMonth(week=0, weekday=0)] = 1.3  # Labor Day
+    y = y * effect.to_numpy()
+    for day, factor in [("2023-03-14", 3.0), ("2023-06-08", 0.2), ("2023-09-20", 2.6),
+                        ("2024-02-27", 0.25), ("2024-04-17", 3.2), ("2024-08-13", 2.8)]:
+        y[idx.get_loc(pd.Timestamp(day))] *= factor          # data-entry errors, nowhere near a holiday
+    return pd.DataFrame({"date": idx.strftime("%Y-%m-%d"), "sales": y.round(2)})
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     samples = {}
@@ -48,6 +78,8 @@ def main():
     samples["multi_store_long.csv"] = pd.concat(
         [pd.DataFrame({"ds": idx.strftime("%Y-%m-%d"), "unique_id": sid, "y": seasonal(len(idx), 7, level=lvl)})
          for sid, lvl in [("store_1", 50), ("store_2", 80), ("store_3", 20)]])
+
+    samples["daily_sales_holidays.csv"] = holiday_sales()
 
     for name, df in samples.items():
         df.to_csv(OUT / name, index=False)

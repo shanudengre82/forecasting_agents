@@ -18,7 +18,9 @@ EDGES = [
     ("regularity", STOP, "insufficient_data"),
     ("resampling", "frequency", "resampled / sparse"),
     ("resampling", STOP, "too_few_points"),
-    ("frequency", "missing_values", ""),
+    ("frequency", "holidays", ""),
+    ("holidays", "outliers", "holiday days are protected"),
+    ("outliers", "missing_values", "removed points become gaps"),
     ("missing_values", NEXT, ""),
 ]
 

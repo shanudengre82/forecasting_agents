@@ -218,3 +218,31 @@ def test_unreachable_local_server_falls_back_to_rules(monkeypatch):
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert _sidebar_caption(at) == "Backend: `none`"
     assert any("Can't reach an LLM server" in w.value for w in at.sidebar.warning)
+
+
+def test_holidays_page_runs_and_country_change_resets_state():
+    at = _page(_app("daily_sales_holidays.csv"), "holidays")
+    assert "`impact`" in _decisions(at)
+    at.chat_input[0].set_value("use Germany").run()
+    assert not at.exception
+    assert at.session_state["prefs"]["holiday_country"] == "DE"
+    assert at.session_state["prefs"]["holiday_subdiv"] is None
+
+
+def test_outliers_page_bulk_buttons_change_decision():
+    at = _page(_app("daily_sales_holidays.csv"), "outliers")
+    assert "`flagged`" in _decisions(at)
+    at.button[next(i for i, b in enumerate(at.button) if b.label == "Apply suggestions")].click().run()
+    assert not at.exception
+    assert "`handled`" in _decisions(at)
+    actions = at.session_state["prefs"]["outlier_actions"]
+    assert len(actions) >= 6  # the six planted outliers, plus any borderline points
+    assert sum(a == "replace" for _, a, _ in actions) == 6
+
+
+def test_outliers_chat_removes_all_and_missing_page_fills_them():
+    at = _page(_app("daily_sales_holidays.csv"), "outliers")
+    at.chat_input[0].set_value("remove all outliers").run()
+    assert not at.exception and "`handled`" in _decisions(at)
+    _page(at, "missing")
+    assert "`filled`" in _decisions(at)

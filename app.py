@@ -156,7 +156,9 @@ ui.set_app(df, key, llm)
 nav = st.navigation([
     st.Page("views/data.py", title="1. Data", icon=":material/table_chart:", default=True),
     st.Page("views/resampling.py", title="2. Resampling", icon=":material/timer:"),
-    st.Page("views/missing.py", title="3. Missing values", icon=":material/healing:"),
+    st.Page("views/holidays.py", title="3. Holidays", icon=":material/event:"),
+    st.Page("views/outliers.py", title="4. Outliers", icon=":material/scatter_plot:"),
+    st.Page("views/missing.py", title="5. Missing values", icon=":material/healing:"),
     st.Page("views/agents.py", title="Agents", icon=":material/account_tree:"),
 ], position="top")
 st.html('<p class="fc-brand">Forecasting Agents</p>')
