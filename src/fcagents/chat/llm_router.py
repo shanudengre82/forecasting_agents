@@ -17,11 +17,22 @@ MEANINGS = {
     "time_col": "column holding the timestamps",
     "target_col": "column to forecast",
     "series_id": "which series to analyse",
+    "holiday_country": "country whose holidays are checked (ISO code)",
+    "holiday_subdiv": "state or region code within that country",
+    "holiday_types": "which holidays: official, unofficial or both",
+    "holiday_window": "days before and after each holiday to check",
+    "outlier_threshold": "outlier sensitivity as a z-score cut-off (lower flags more points)",
+    "outlier_bulk": "one choice for every flagged outlier",
 }
 
 
+def _values(key: str, ctx: dict) -> str:
+    vals = allowed_values(key, ctx)
+    return json.dumps(vals) if len(vals) <= 30 else json.dumps(vals[:30])[:-1] + ", ...]"
+
+
 def build_router_prompt(text: str, page: str, ctx: dict) -> str:
-    lines = [f'- "{k}" = {MEANINGS[k]}; one of {json.dumps(allowed_values(k, ctx))}' for k in PAGE_KEYS[page]]
+    lines = [f'- "{k}" = {MEANINGS[k]}; one of {_values(k, ctx)}' for k in PAGE_KEYS[page]]
     example = PAGE_KEYS[page][0]
     return (
         "Settings you may change:\n" + "\n".join(lines) + "\n"

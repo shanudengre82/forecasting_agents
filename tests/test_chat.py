@@ -129,3 +129,39 @@ def test_real_llm_chat():
     print("router:", proposal)
     for a in proposal.actions:  # whatever the model proposes must have passed validation
         assert validate("resampling", a, CTX) is None
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("use Germany", {"holiday_country": "DE", "holiday_subdiv": None}),
+    ("switch to the UK", {"holiday_country": "GB", "holiday_subdiv": None}),
+    ("only California", {"holiday_subdiv": "CA"}),
+    ("include unofficial holidays", {"holiday_types": "both"}),
+    ("official only", {"holiday_types": "official"}),
+    ("check 3 days around holidays", {"holiday_window": "3"}),
+    ("all states", {"holiday_subdiv": None}),
+])
+def test_holiday_commands(text, expected):
+    from fcagents.tools.holidays import subdivisions
+
+    ctx = {"subdivisions": subdivisions("US"), "holiday_country": "US"}
+    res = parse_command(text, "holidays", ctx)
+    assert {a.key: a.value for a in res.actions} == expected
+    assert all(validate("holidays", a, ctx) is None for a in res.actions)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("apply the suggestions", {"outlier_bulk": "suggested"}),
+    ("remove all outliers", {"outlier_bulk": "remove"}),
+    ("keep them all", {"outlier_bulk": "keep"}),
+    ("replace all points", {"outlier_bulk": "replace"}),
+    ("be more sensitive", {"outlier_threshold": "3.0"}),
+    ("set the threshold to 5", {"outlier_threshold": "5.0"}),
+])
+def test_outlier_commands(text, expected):
+    res = parse_command(text, "outliers", {})
+    assert {a.key: a.value for a in res.actions} == expected
+
+
+def test_holiday_window_and_threshold_limits():
+    assert parse_command("check 20 days", "holidays", {}).errors
+    assert parse_command("threshold 4", "outliers", {}).errors

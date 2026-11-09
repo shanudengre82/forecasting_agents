@@ -7,7 +7,9 @@ from collections.abc import Iterator
 import pandas as pd
 
 from fcagents.agents.frequency_agent import FrequencyAgent
+from fcagents.agents.holidays_agent import HolidaysAgent
 from fcagents.agents.missing_values_agent import MissingValuesAgent
+from fcagents.agents.outliers_agent import OutliersAgent
 from fcagents.agents.regularity_agent import RegularityAgent
 from fcagents.agents.resampling_agent import ResamplingAgent
 from fcagents.agents.time_index_agent import TimeIndexAgent
@@ -18,9 +20,12 @@ from fcagents.llm.backend import LLMBackend, NullBackend
 STAGES: dict[str, list[BaseAgent]] = {
     "data": [TimeIndexAgent(), RegularityAgent()],
     "resampling": [ResamplingAgent(), FrequencyAgent()],
+    "holidays": [HolidaysAgent()],
+    "outliers": [OutliersAgent()],
     "missing": [MissingValuesAgent()],
 }
-STAGE_TITLES = {"data": "Data", "resampling": "Resampling", "missing": "Missing values"}
+STAGE_TITLES = {"data": "Data", "resampling": "Resampling", "holidays": "Holidays", "outliers": "Outliers",
+                "missing": "Missing values"}
 PIPELINE: list[BaseAgent] = [a for agents in STAGES.values() for a in agents]
 
 
@@ -63,10 +68,13 @@ def run_pipeline(
     resample_freq: str = "auto",
     resample_agg: str = "mean",
     fill_method: str = "auto",
+    **more_prefs,
 ) -> Iterator[tuple[AgentResult, PipelineState]]:
-    """All stages in one go (tests, scripts and the container smoke test)."""
+    """All stages in one go (tests, scripts and the container smoke test). ``more_prefs``: holiday_country,
+    holiday_subdiv, holiday_types, holiday_window, outlier_threshold, outlier_actions."""
     state = initial_state(df, time_col, target_col, series_id)
-    prefs = {"resample_freq": resample_freq, "resample_agg": resample_agg, "fill_method": fill_method}
+    prefs = {"resample_freq": resample_freq, "resample_agg": resample_agg, "fill_method": fill_method,
+             **more_prefs}
     for stage in STAGES:
         for result, state in run_stage(stage, state, llm, **prefs):
             yield result, state

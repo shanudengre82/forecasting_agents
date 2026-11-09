@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from fcagents.chat.actions import DEFAULTS, PAGE_KEYS, Action
+from fcagents.tools.holidays import MAX_WINDOW, countries
 from fcagents.tools.resample import FREQ_OPTIONS, MAX_FREQ, MIN_FREQ, freq_span
 
 QUESTION_START = re.compile(
@@ -15,7 +16,7 @@ QUESTION_START = re.compile(
     r"summari[sz]e|tell|list|show)\b", re.I)
 COMMAND_VERB = re.compile(
     r"\b(resample|aggregate|agg|convert|switch|change|set|use|fill|impute|interpolate|make|group|bin|try|apply|"
-    r"pick|choose|select|reset|undo)\b", re.I)
+    r"pick|choose|select|reset|undo|keep|remove|delete|drop|replace|include|exclude|add|fix|check|only|be)\b", re.I)
 POLITE = re.compile(r"^(can|could|would|will) you (please )?", re.I)
 
 _SPAN_TO_ALIAS = {freq_span(a): a for a in FREQ_OPTIONS}
@@ -57,6 +58,30 @@ _FILL_WORDS = [
     ("ffill", r"forward[- ]?fill\w*|ffill|forward|carry \w* ?forward|previous value|last known"),
     ("bfill", r"backward[- ]?fill\w*|bfill|backward|back[- ]?fill\w*|next value"),
     ("zero", r"zeros?|with 0\b|to 0\b"),
+]
+
+
+_COUNTRY_ALIASES = {"usa": "US", "america": "US", "united states of america": "US", "uk": "GB",
+                    "britain": "GB", "great britain": "GB", "england": "GB", "holland": "NL"}
+_ALL_REGIONS = re.compile(r"\b(all states|whole country|nationwide|national|all regions|no state)\b", re.I)
+_TYPES = [
+    ("unofficial", r"only unofficial|unofficial only|just unofficial"),
+    ("official", r"only official|official only|just official|without unofficial|exclude unofficial|no unofficial"),
+    ("both", r"(?:include|with|add|plus|and) (?:the )?unofficial|unofficial (?:ones |holidays )?too|all holidays|"
+             r"both|official and unofficial"),
+]
+_WINDOW = re.compile(r"\b(\d+)\s*days?\b", re.I)
+_SENSITIVITY = [
+    ("3.0", r"more sensitive|high sensitivity|flag more|stricter|be strict"),
+    ("5.0", r"less sensitive|low sensitivity|flag (?:fewer|less)|only (?:the )?(?:extreme|big|large)"),
+    ("3.5", r"normal sensitivity|default sensitivity"),
+]
+_Z = re.compile(r"(?:z|threshold|cut-?off)\s*(?:of|>|=|to)?\s*(\d(?:\.\d)?)\b", re.I)
+_BULK = [
+    ("suggested", r"(?:apply|use|take|accept|follow) (?:the |your |all )?suggest\w*|do what you suggest"),
+    ("keep", r"keep (?:them |it )?all|keep (?:all|every)\w*|keep (?:the )?outliers"),
+    ("remove", r"(?:remove|delete|drop) (?:them |it )?all|(?:remove|delete|drop) (?:all |every |the )?(?:outliers?|points?|of them)"),
+    ("replace", r"(?:replace|fix) (?:them |it )?all|(?:replace|fix) (?:all |every |the )?(?:outliers?|points?|of them)"),
 ]
 
 
@@ -123,6 +148,53 @@ def _parse_data(text: str, ctx: dict) -> list[Action]:
     return list({a.key: a for a in actions}.values())
 
 
+def _match_name(names: dict[str, str], text: str) -> str | None:
+    """Code of the longest name mentioned in ``text`` (so "South Africa" beats "Africa")."""
+    hits = [(len(n), code) for code, n in names.items() if _mentions(n, text)]
+    return max(hits)[1] if hits else None
+
+
+def _parse_holidays(text: str, ctx: dict) -> tuple[list[Action], list[str]]:
+    actions, errors = [], []
+    subdivs = ctx.get("subdivisions", {})
+    if code := _match_name(subdivs, text):
+        actions.append(Action("holiday_subdiv", code))
+    elif _ALL_REGIONS.search(text):
+        actions.append(Action("holiday_subdiv", None))
+    names = countries()
+    alias = next((c for a, c in sorted(_COUNTRY_ALIASES.items(), key=lambda kv: -len(kv[0])) if _mentions(a, text)),
+                 None)
+    country = alias or _match_name(names, text) or next(
+        (tok for tok in re.findall(r"\b[A-Z]{2}\b", text) if tok in names), None)  # upper-case codes only
+    if country and country != ctx.get("holiday_country"):
+        actions.append(Action("holiday_country", country))
+        actions = [a for a in actions if a.key != "holiday_subdiv"] + [Action("holiday_subdiv", None)]
+    if kind := _first_match(_TYPES, text):
+        actions.append(Action("holiday_types", kind))
+    if m := _WINDOW.search(text):
+        days = int(m.group(1))
+        if days > MAX_WINDOW:
+            errors.append(f"{days} days is more than the {MAX_WINDOW} days around a holiday that can be checked.")
+        else:
+            actions.append(Action("holiday_window", str(days)))
+    return list({a.key: a for a in actions}.values()), errors
+
+
+def _parse_outliers(text: str) -> tuple[list[Action], list[str]]:
+    actions, errors = [], []
+    if sens := _first_match(_SENSITIVITY, text):
+        actions.append(Action("outlier_threshold", sens))
+    elif m := _Z.search(text):
+        z = float(m.group(1))
+        if z in (3.0, 3.5, 5.0):
+            actions.append(Action("outlier_threshold", str(z)))
+        else:
+            errors.append(f"A cut-off of {z:g} isn't offered; choose 3, 3.5 or 5.")
+    if bulk := _first_match(_BULK, text):
+        actions.append(Action("outlier_bulk", bulk))
+    return actions, errors
+
+
 def parse_command(text: str, page: str, ctx: dict | None = None) -> ParseResult:
     ctx = ctx or {}
     if is_question(text):
@@ -143,6 +215,10 @@ def parse_command(text: str, page: str, ctx: dict | None = None) -> ParseResult:
             res.errors.append(err)
         if agg := _first_match(_AGG_WORDS, rest):
             res.actions.append(Action("resample_agg", agg))
+    elif page == "holidays":
+        res.actions, res.errors = _parse_holidays(text, ctx)
+    elif page == "outliers":
+        res.actions, res.errors = _parse_outliers(text)
     elif page == "missing":
         method = _first_match(_FILL_WORDS, text)
         if method is None and _AUTO.search(text):

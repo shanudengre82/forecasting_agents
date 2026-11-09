@@ -22,6 +22,14 @@ class PipelineState:
     resample_freq: str = "auto"  # user preferences, set from page controls or the chat
     resample_agg: str = "mean"
     fill_method: str = "auto"
+    holiday_country: str = "US"
+    holiday_subdiv: str | None = None  # state / region code, None = whole country
+    holiday_types: tuple[str, ...] = ("official",)  # official and/or unofficial
+    holiday_window: int = 7  # days before and after each holiday to check
+    outlier_threshold: float = 3.5
+    outlier_actions: tuple[tuple[str, str, float | None], ...] = ()  # (timestamp ISO, keep|remove|replace, value)
+    protected_index: pd.DatetimeIndex | None = None  # holiday-affected timestamps: never flagged as outliers
+    covariates: pd.DataFrame | None = None  # suggested holiday covariates, aligned to ``series``
     stopped: str | None = None  # why the pipeline stopped; later stages skip every agent with this reason
     findings: dict[str, AgentResult] = field(default_factory=dict)
 

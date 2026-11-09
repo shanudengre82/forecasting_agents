@@ -8,13 +8,18 @@ import streamlit as st
 
 from fcagents import theme
 from fcagents.chat import HINTS, respond
-from fcagents.chat.actions import DEFAULTS, PAGE_KEYS
+from fcagents.chat.actions import DEFAULTS, HOLIDAY_TYPE_CHOICES, PAGE_KEYS
 from fcagents.orchestrator import STAGE_TITLES, STAGES, initial_state, run_stage
+from fcagents.tools.holidays import holiday_covariates
+from fcagents.tools.outliers import bulk_actions
 from fcagents.tools.resample import MIN_POINTS
 from fcagents.tools.time_index import detect_time_column
 
 STAGE_ORDER = list(STAGES)
-PAGE_FILES = {"data": "views/data.py", "resampling": "views/resampling.py", "missing": "views/missing.py"}
+PAGE_FILES = {"data": "views/data.py", "resampling": "views/resampling.py", "holidays": "views/holidays.py",
+              "outliers": "views/outliers.py", "missing": "views/missing.py"}
+# Settings each stage's agents read. The outliers page chat sets "outlier_bulk", which becomes outlier_actions.
+STAGE_PREFS = {**PAGE_KEYS, "outliers": ("outlier_threshold", "outlier_actions")}
 
 # --------------------------------------------------------------------------- app context
 
@@ -23,7 +28,7 @@ def set_app(df: pd.DataFrame | None, data_key: str, llm) -> None:
     """Called by app.py on every run. A new dataset resets preferences, cached stages and chats."""
     ss = st.session_state
     if ss.get("data_key") != data_key:
-        ss.update(data_key=data_key, prefs=dict(DEFAULTS), stages={}, chat={}, pending={})
+        ss.update(data_key=data_key, prefs=default_prefs(), stages={}, chat={}, pending={})
     ss["_df"], ss["_llm"] = df, llm
 
 
@@ -35,8 +40,13 @@ def app_llm():
     return st.session_state["_llm"]
 
 
+def default_prefs() -> dict:
+    out = {k: _native(k, v, {}) for k, v in DEFAULTS.items() if k != "outlier_bulk"}
+    return out | {"outlier_actions": ()}
+
+
 def prefs() -> dict:
-    return st.session_state.setdefault("prefs", dict(DEFAULTS))
+    return st.session_state.setdefault("prefs", default_prefs())
 
 
 def require_data() -> pd.DataFrame:
@@ -71,7 +81,7 @@ def ensure_stage(stage: str) -> tuple[tuple, list, object]:
         up_key, up_state = ss["data_key"], initial_state(app_df())
     else:
         up_key, _, up_state = ensure_stage(STAGE_ORDER[i - 1])
-    stage_prefs = {k: prefs()[k] for k in PAGE_KEYS[stage]}
+    stage_prefs = {k: prefs()[k] for k in STAGE_PREFS[stage]}
     key = (up_key, tuple(stage_prefs.items()), app_llm().name)
     cached = ss["stages"].get(stage)
     if cached and cached[0] == key:
@@ -141,8 +151,15 @@ def _page_facts(stage: str, results: list) -> dict[str, dict]:
 
 
 def _native(key: str, value, ctx: dict):
-    if key == "series_id" and value is not None:  # chat values are strings; ids may be ints in the data
+    """Chat values are strings; convert them to what the pipeline stores."""
+    if key == "series_id" and value is not None:  # ids may be ints in the data
         return next((s for s in ctx["series_ids"] if str(s) == value), value)
+    if key == "holiday_types" and isinstance(value, str):
+        return HOLIDAY_TYPE_CHOICES[value]
+    if key == "holiday_window" and value is not None:
+        return int(value)
+    if key == "outlier_threshold" and value is not None:
+        return float(value)
     return value
 
 
@@ -187,7 +204,29 @@ def chat_panel(stage: str, ctx: dict, entry) -> None:
 
 def _apply(actions, ctx: dict) -> None:
     for a in actions:
-        prefs()[a.key] = _native(a.key, a.value, ctx)
+        if a.key == "outlier_bulk":  # one choice for every point flagged right now
+            table = outlier_table()
+            prefs()["outlier_actions"] = () if a.value is None or table is None else bulk_actions(table, a.value)
+        else:
+            prefs()[a.key] = _native(a.key, a.value, ctx)
+
+
+def stage_result(stage: str, agent: str):
+    entry = st.session_state.get("stages", {}).get(stage)
+    return next((r for r in entry[1] if r.agent == agent and r.status != "skipped"), None) if entry else None
+
+
+def outlier_table() -> pd.DataFrame | None:
+    r = stage_result("outliers", "outliers")
+    return r.extras.get("table") if r else None
+
+
+def final_covariates(index: pd.DatetimeIndex) -> pd.DataFrame | None:
+    """Suggested holiday covariates for ``index`` (e.g. the filled series), or None if none were suggested."""
+    r = stage_result("holidays", "holidays")
+    if r is None or r.extras.get("covariates") is None:
+        return None
+    return holiday_covariates(index, r.extras["calendar"], r.extras["effects"])
 
 
 def _resolve(stage: str, ctx: dict, accept: bool) -> None:
@@ -252,7 +291,9 @@ def render_resampling_details(r) -> None:
 
 
 def plot_series(title: str, series: pd.Series | None, name: str, raw: pd.Series | None = None,
-                missing: pd.DatetimeIndex | None = None, filled: pd.DatetimeIndex | None = None) -> None:
+                missing: pd.DatetimeIndex | None = None, filled: pd.DatetimeIndex | None = None,
+                marks: list[tuple[str, pd.Series, dict]] | None = None, expected: pd.Series | None = None) -> None:
+    """``marks``: extra point layers as (legend name, values indexed by timestamp, plotly marker dict)."""
     if series is None or series.empty:
         return
     s = series[~series.index.isna()].sort_index()
@@ -263,6 +304,9 @@ def plot_series(title: str, series: pd.Series | None, name: str, raw: pd.Series 
         raw = raw.dropna()
         fig.add_trace(go.Scatter(x=raw.index, y=raw.values, mode="markers", name="raw observations",
                                  marker=dict(color=p["raw"], size=4, opacity=0.6)))
+    if expected is not None:
+        fig.add_trace(go.Scatter(x=expected.index, y=expected.values, mode="lines", name="expected",
+                                 line=dict(color=p["raw"], width=1, dash="dot")))
     y = s.values if s.notna().any() else [1] * len(s)
     fig.add_trace(go.Scatter(x=s.index, y=y, mode="lines+markers" if len(s) < 60 else "lines", name=name,
                              line=dict(color=p["trace"], width=2), marker=dict(size=6)))
@@ -276,6 +320,10 @@ def plot_series(title: str, series: pd.Series | None, name: str, raw: pd.Series 
                                  name=f"Missing timestamp ({len(missing)})",
                                  marker=dict(color=p["warn"], symbol="x-thin-open", size=10,
                                              line=dict(width=2, color=p["warn"]))))
+    for mark_name, pts, marker in marks or []:
+        if len(pts):
+            fig.add_trace(go.Scatter(x=pts.index, y=pts.values, mode="markers", name=f"{mark_name} ({len(pts)})",
+                                     marker=marker))
     fig.update_layout(**theme.plotly_layout(), showlegend=len(fig.data) > 1)
     st.markdown(f"**{title}**")
     st.plotly_chart(fig, width="stretch", theme=None)

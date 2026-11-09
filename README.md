@@ -31,7 +31,9 @@ with Back/Next buttons and a step bar that shows each step's status:
 |---|---|---|
 | 1 · Data | Time Index, Regularity | time column, target column, series (long format) |
 | 2 · Resampling | Resampling, Frequency | target frequency (1h – 1W), aggregation per bin |
-| 3 · Missing values | Missing Values | fill method; download the prepared series as CSV |
+| 3 · Holidays | Holidays | country and state (default US), official / unofficial holidays, days before and after (0–14); download the suggested holiday covariates |
+| 4 · Outliers | Outliers | sensitivity; per flagged point: keep, remove or replace with another value (or apply the suggestions to all) |
+| 5 · Missing values | Missing Values | fill method; download the prepared series (with holiday covariates) as CSV |
 | Agents | — | the catalogue below |
 
 Each page opens with a **chat**. You can type a change instead of using the controls, or ask about the series:
@@ -40,6 +42,8 @@ Each page opens with a **chat**. You can type a change instead of using the cont
 |---|---|
 | Data | “use temp as the target”, “switch to store_2”, “how many points are there?” |
 | Resampling | “resample to 6 hours with sum”, “daily, max per day”, “what is the mean?” |
+| Holidays | “use Germany”, “only California”, “include unofficial holidays”, “check 3 days around holidays” |
+| Outliers | “apply the suggestions”, “remove all outliers”, “keep them all”, “be more sensitive” |
 | Missing values | “fill gaps by interpolation”, “use seasonal filling”, “how many values were filled?” |
 
 The chat keeps to the same principle as the agents:
@@ -70,6 +74,8 @@ flowchart LR
   regularity["Regularity Agent"]
   resampling["Resampling Agent"]
   frequency["Frequency Agent"]
+  holidays["Holidays Agent"]
+  outliers["Outliers Agent"]
   missing_values["Missing Values Agent"]
   stop["Stop & ask user"]
   next["Next agents (planned)"]
@@ -81,7 +87,9 @@ flowchart LR
   regularity -->|insufficient_data| stop
   resampling -->|resampled / sparse| frequency
   resampling -->|too_few_points| stop
-  frequency --> missing_values
+  frequency --> holidays
+  holidays -->|holiday days are protected| outliers
+  outliers -->|removed points become gaps| missing_values
   missing_values --> next
 ```
 
@@ -160,7 +168,47 @@ Names the sampling frequency in plain words and as a pandas alias, lists missing
 |---|---|
 | `<alias>` | The pandas frequency alias, e.g. h, D, B, W-SUN, MS, QS-JAN. The status is a warning if timestamps are missing. |
 
-### 5. Missing Values Agent
+### 5. Holidays Agent
+
+Compares each holiday, and the days around it, with a same-weekday baseline to find out whether holidays move the series. If they do, it suggests holiday covariates for the forecasting model and tells the Outliers agent to leave those days alone.
+
+| Property | Details |
+|---|---|
+| Page | Holidays |
+| Runs when | When a fixed frequency of one day or finer is known and the series has values (after Frequency). |
+| Inputs | Fixed-frequency series (daily or finer)<br>Country and state, official and/or unofficial holidays, days around each holiday (page or chat) |
+| Outputs | Holidays in the data and whether they move the series (overall test and per holiday)<br>Effects on the days before and after a holiday (e.g. a shopping run-up)<br>Suggested 0/1 covariates: is_holiday plus one column per detected effect (CSV download)<br>Holiday-affected days, which the Outliers agent never flags |
+| User controls | Country (default United States) and state / region<br>Holiday types: Official (public holidays), Unofficial (observances, other days)<br>Days before and after each holiday to check (0–14, default 7) |
+| Tools | `tools.holidays.holiday_calendar`<br>`tools.holidays.holiday_impact`<br>`tools.holidays.holiday_covariates` |
+
+| Decision | Meaning |
+|---|---|
+| `impact` | Holidays move the series. Use the suggested holiday covariates in the forecasting model. |
+| `window_impact` | The holidays themselves look normal, but the days around them move. Use the before/after covariates. |
+| `no_impact` | No holiday stands out from ordinary days; holiday covariates are not needed. |
+| `too_few_holidays` | Fewer than 3 holidays fall inside the data, too few to judge. |
+| `not_applicable` | The frequency is coarser than a day (weeks, months), so single days can't be seen. |
+
+### 6. Outliers Agent
+
+Compares every value with what the trend and seasonal pattern predict and flags the ones that are far off. You decide per point: keep it, remove it (the Missing Values agent then fills the gap) or replace it with another value. Nothing changes until you choose.
+
+| Property | Details |
+|---|---|
+| Page | Outliers |
+| Runs when | When a fixed frequency is known and the series has values (after the Holidays agent). |
+| Inputs | Fixed-frequency series<br>Holiday-affected days from the Holidays agent<br>Sensitivity and your keep / remove / replace choices (page or chat) |
+| Outputs | Flagged points with their value, expected value and robust z-score<br>A suggestion per point (replace when |z| ≥ 5, otherwise keep)<br>Holiday-affected points that were left alone<br>The series with your choices applied (removed points become gaps for the Missing Values agent) |
+| User controls | Sensitivity: High (|z| > 3), Normal (|z| > 3.5), Low (|z| > 5)<br>Per point: Keep / Remove / Replace with a replacement value<br>All at once: keep all, remove all, replace all, apply suggestions (buttons or chat) |
+| Tools | `tools.outliers.detect_outliers`<br>`tools.outliers.apply_outlier_actions` |
+
+| Decision | Meaning |
+|---|---|
+| `none_found` | No value is far from the expected pattern. |
+| `flagged` | Some values look like outliers and you haven't decided about all of them yet; they are kept until you do. |
+| `handled` | You decided about every flagged point; your choices are applied. |
+
+### 7. Missing Values Agent
 
 Puts the series on its complete fixed-frequency grid, counts missing timestamps and empty values, and fills them with your chosen method or a rule-based recommendation.
 

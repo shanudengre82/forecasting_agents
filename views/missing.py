@@ -26,6 +26,11 @@ if r.status != "skipped":
     ui.plot_series(ui.series_title(state, f" · {r.facts['method_label']}"), state.series,
                    state.target_col or "value", filled=r.extras["filled_index"])
     name = f"{state.target_col or 'series'}_{state.freq}_prepared.csv"
-    st.download_button("Download prepared series (CSV)", state.series.to_frame().to_csv(index_label="timestamp"),
+    out = state.series.to_frame()
+    cov = ui.final_covariates(out.index)
+    if cov is not None:
+        out = out.join(cov)
+        st.caption(f"The download includes {len(cov.columns)} holiday covariate columns from the Holidays step.")
+    st.download_button("Download prepared series (CSV)", out.to_csv(index_label="timestamp"),
                        file_name=name, mime="text/csv", icon=":material/download:")
 ui.nav_buttons("missing")
