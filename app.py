@@ -25,4 +25,5 @@ FONTS = ('<link rel="preconnect" href="https://fonts.googleapis.com">'
 demo = build_app()
 
 if __name__ == "__main__":
-    demo.launch(css=theme.css(), head=FONTS, footer_links=["gradio", "settings"])
+    demo.launch(theme=theme.gradio_theme(), css=theme.css(), js=theme.JS, head=FONTS,
+                footer_links=["gradio", "settings"])
