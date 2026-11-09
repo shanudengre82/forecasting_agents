@@ -1,0 +1,10 @@
+# Installed by the Hugging Face Space (Gradio SDK, ZeroGPU). gradio, spaces and huggingface_hub are provided by
+# the platform; torch is preinstalled there (left unpinned on purpose). Keep in sync with pyproject.toml
+# (tests/test_requirements.py checks it).
+pandas>=2.2
+numpy>=1.26
+plotly>=5.24
+holidays>=0.60
+torch
+transformers>=4.45
+accelerate>=1.0

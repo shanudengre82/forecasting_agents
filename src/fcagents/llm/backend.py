@@ -9,7 +9,7 @@ from typing import Protocol
 
 DEFAULT_MODEL_ID = os.environ.get("MODEL_ID", "Qwen/Qwen2.5-0.5B-Instruct")  # local CPU model
 DEFAULT_API_MODEL = os.environ.get("HF_API_MODEL", "Qwen/Qwen2.5-7B-Instruct")  # hosted model (user's token)
-DEFAULT_BACKEND = os.environ.get("LLM_BACKEND", "local")  # "local" | "server" (local runs) | "api" (HF Space)
+DEFAULT_BACKEND = os.environ.get("LLM_BACKEND", "local")  # local | server (local runs); zerogpu | api (HF Space)
 # OpenAI-compatible LLM server for local runs (Ollama by default; vLLM / LM Studio work the same way).
 DEFAULT_SERVER_URL = os.environ.get("LOCAL_LLM_URL", "http://localhost:11434/v1")
 DEFAULT_SERVER_MODEL = os.environ.get("LOCAL_LLM_MODEL", "qwen2.5:0.5b")
@@ -20,6 +20,18 @@ API_PROVIDERS = ["auto", "hf-inference", "together", "novita", "fireworks-ai", "
 def on_hf_space() -> bool:
     """True inside a Hugging Face Space (HF sets SPACE_ID in every Space container)."""
     return bool(os.environ.get("SPACE_ID"))
+
+
+def zerogpu_available() -> bool:
+    """True on a ZeroGPU Space (HF sets SPACES_ZERO_GPU there)."""
+    return bool(os.environ.get("SPACES_ZERO_GPU"))
+
+
+def zerogpu_backend():
+    """The Space's own model on ZeroGPU. app.py has already imported fcagents.llm.zerogpu at startup."""
+    from fcagents.llm import zerogpu
+
+    return zerogpu.backend()
 
 
 def _chat(client, system: str, user: str, max_new_tokens: int, **kw) -> str:

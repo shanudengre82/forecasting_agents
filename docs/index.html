@@ -11,7 +11,7 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&display=swap">
 <style>
 /* Layout: a bench instrument. Left-aligned column, one scope screen in the hero, the pipeline drawn as a
-   signal-flow strip with status lamps, same tokens as the Streamlit app (.streamlit/config.toml). */
+   signal-flow strip with status lamps, same tokens as the app (src/fcagents/theme.py). */
 :root {
   --bench: #E9EDF0;   /* page */
   --panel: #FFFFFF;   /* screens, tables */
@@ -345,7 +345,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 1rem; flex-wr
     </div>
     <pre aria-label="Commands"><span class="c"># locally, with the CPU model</span>
 uv sync --extra llm
-uv run streamlit run app.py
+uv run python app.py
 
 <span class="c"># or in Docker, on port 7860</span>
 docker build -t fcagents .
