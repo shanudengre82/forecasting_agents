@@ -1,0 +1,30 @@
+name: Sync to Hugging Face Space
+
+# Push main to the HF Space after CI passes. Needs a write-scoped HF token in the HF_TOKEN repo secret.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: sync-to-hf
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          lfs: true
+      - name: Push to Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          test -n "$HF_TOKEN" || { echo "::error::HF_TOKEN secret is not set"; exit 1; }
+          git push --force "https://shanudengre82:${HF_TOKEN}@huggingface.co/spaces/shanudengre82/forecasting-agents" HEAD:refs/heads/main
