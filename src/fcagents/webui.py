@@ -643,6 +643,7 @@ def _llm_sidebar() -> dict:
                                  "your account. It stays in this browser session and is never stored.",
                             visible=kind == "api")
     c["status"] = gr.Markdown()
+    c["agents_note"] = gr.Markdown()
     gr.Markdown("---\n## Data")
     c["mode"] = gr.Radio(["Sample dataset", "Upload CSV"], value="Sample dataset", show_label=False)
     samples = sample_names()
@@ -740,16 +741,15 @@ def build_app() -> gr.Blocks:
 
         # ------------------------------------------------------------- right panel: agents and chat
         with gr.Sidebar(open=True, width=420, position="right", label="Agents", elem_id="fc-right"):
-            ui.shared["panel_title"] = gr.Markdown("### Data")
-            ui.shared["cards"] = gr.HTML()
-            ui.shared["chat"] = gr.Chatbot(label="Chat with this step", height=300, buttons=["copy"])
+            ui.shared["chat"] = gr.Chatbot(show_label=False, height=300, buttons=["copy"])
             ui.shared["hint"] = gr.HTML()
             msg = gr.Textbox(placeholder="Ask about the series, or tell me what to change…", show_label=False,
                              submit_btn=True)
             with gr.Row():
                 ui.shared["apply"] = gr.Button("Apply", variant="primary", visible=False, size="sm")
                 ui.shared["dismiss"] = gr.Button("Dismiss", visible=False, size="sm")
-            agents_note = gr.Markdown()
+            ui.shared["panel_title"] = gr.Markdown("### Data")
+            ui.shared["cards"] = gr.HTML()
 
         # ------------------------------------------------------------- centre
         gr.HTML('<p class="fc-brand">Forecasting Agents</p>')
@@ -780,6 +780,7 @@ def build_app() -> gr.Blocks:
                 return ui.updates(stage, s)
             return fn
 
+        agents_note = side["agents_note"]
         all_outputs = ui.all_outputs() + [agents_note]
 
         def refresh_current(s: Session, cur: str):
