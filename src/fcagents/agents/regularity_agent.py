@@ -7,6 +7,7 @@ from fcagents.tools.frequency import analyze_regularity
 
 class RegularityAgent(BaseAgent):
     name = "regularity"
+    per_series = True
     title = "Regularity Agent"
     task = "Decide whether the time series is sampled at a fixed frequency."
     scope = "Do NOT discuss seasonality or models; only whether the spacing of timestamps is fixed."

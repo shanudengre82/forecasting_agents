@@ -70,8 +70,8 @@ def test_downloads_are_csv_files():
     out = webui.render(s, "missing")
     path = out["download"]["value"]
     frame = pd.read_csv(path)
-    assert frame.columns[0] == "timestamp" and len(frame) > 100
-    assert ("covariate" in out["note"]) == (len(frame.columns) > 2)
+    assert list(frame.columns[:3]) == ["series", "timestamp", "value"] and len(frame) > 100
+    assert ("covariate" in out["note"]) == (len(frame.columns) > 3)
 
 
 def test_outlier_editor_round_trip():
@@ -187,3 +187,26 @@ def test_llm_off_uses_rules():
     s = Session()
     _configure(s, "server", use=False, server_model="m")
     assert s.llm.name == "none"
+
+
+def test_multi_series_shows_overview_focus_and_covariate_roles():
+    s = _session("store_demand_covariates.csv")
+    out = webui.render(s, "data")
+    assert out["focus"]["visible"] and out["focus"]["choices"] == ["north", "south", "east"]
+    assert out["overview"]["visible"] and len(out["overview"]["value"]) == 3
+    roles = out["covariates"]["value"].set_index("column")["role"].to_dict()
+    assert roles == {"temperature": "past", "promo": "future", "price": "future", "store_type": "static",
+                     "note": "ignore"}
+    assert 'class="fc-focus"' in out["cards"] and "north in detail" in out["cards"]
+
+
+def test_single_series_hides_focus_and_overview():
+    out = webui.render(_session("hourly_energy.csv"), "data")
+    assert not out["focus"]["visible"] and not out["overview"]["visible"]
+
+
+def test_covariate_role_edits_become_overrides():
+    view = pd.DataFrame({"column": ["a", "b", "c"], "detected": ["past", "future", "past"],
+                         "reason": ["", "", ""], "role": ["future", "future", "bogus"]})
+    overrides, problems = webui.covariate_overrides_from_view(view)
+    assert overrides == (("a", "future"),) and len(problems) == 1

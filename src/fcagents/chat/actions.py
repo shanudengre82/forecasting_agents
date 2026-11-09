@@ -10,18 +10,19 @@ from fcagents.tools.outliers import DEFAULT_THRESHOLD, THRESHOLDS
 from fcagents.tools.resample import AGGREGATIONS, FREQ_OPTIONS
 
 PAGE_KEYS = {
-    "data": ("time_col", "target_col", "series_id"),
+    "data": ("time_col", "target_col", "targets", "series_id", "series_scope"),
     "resampling": ("resample_freq", "resample_agg"),
     "holidays": ("holiday_country", "holiday_subdiv", "holiday_types", "holiday_window"),
     "outliers": ("outlier_threshold", "outlier_bulk"),
     "missing": ("fill_method",),
 }
 # Chat values are strings; ui._native converts them to the stored types (tuples, ints, floats).
-DEFAULTS = {"time_col": None, "target_col": None, "series_id": None,
+DEFAULTS = {"time_col": None, "target_col": None, "targets": None, "series_id": None, "series_scope": None,
             "resample_freq": "auto", "resample_agg": "mean", "fill_method": "auto",
             "holiday_country": DEFAULT_COUNTRY, "holiday_subdiv": None, "holiday_types": "official",
             "holiday_window": str(DEFAULT_WINDOW), "outlier_threshold": str(DEFAULT_THRESHOLD), "outlier_bulk": None}
-KEY_LABELS = {"time_col": "time column", "target_col": "target column", "series_id": "series",
+KEY_LABELS = {"time_col": "time column", "target_col": "target column", "targets": "target columns",
+              "series_id": "series in focus", "series_scope": "series to forecast",
               "resample_freq": "frequency", "resample_agg": "aggregation", "fill_method": "fill method",
               "holiday_country": "holiday country", "holiday_subdiv": "state / region",
               "holiday_types": "holiday types", "holiday_window": "days around holidays",
@@ -54,6 +55,8 @@ def allowed_values(key: str, ctx: dict) -> list[str]:
         "time_col": list(ctx.get("time_cols", [])),
         "target_col": list(ctx.get("target_cols", [])),
         "series_id": [str(s) for s in ctx.get("series_ids", [])],
+        "targets": list(ctx.get("target_cols", [])),
+        "series_scope": ["all"],
         "holiday_country": list(countries()),
         "holiday_subdiv": list(ctx.get("subdivisions", {})),
         "holiday_types": list(HOLIDAY_TYPE_CHOICES),
@@ -68,6 +71,9 @@ def validate(page: str, action: Action, ctx: dict) -> str | None:
     if action.key not in PAGE_KEYS.get(page, ()):
         return f"The {KEY_LABELS.get(action.key, action.key)} can't be changed on this page."
     allowed = allowed_values(action.key, ctx)
+    if action.key == "targets" and action.value is not None:  # comma-separated list of target columns
+        bad = [v for v in action.value.split(",") if v not in allowed]
+        return f"`{', '.join(bad)}` is not a numeric column. Choose from: {', '.join(allowed)}." if bad else None
     if action.value not in allowed and action.value != DEFAULTS[action.key]:
         return f"`{action.value}` is not a valid {KEY_LABELS[action.key]}. Choose one of: {', '.join(allowed)}."
     return None

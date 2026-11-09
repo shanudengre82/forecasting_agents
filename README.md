@@ -26,25 +26,41 @@ served by [Hugging Face Inference Providers](https://huggingface.co/docs/inferen
 **your own** Hugging Face token (see [Language model & tokens](#language-model--tokens)). The app's **Agents** tab shows the same
 catalogue as below.
 
-## Pages & chat
+## Layout, pages & chat
 
-The language model and the data source sit at the top of the sidebar. The pipeline runs as one tab per step,
-with Back/Next buttons and a step bar that shows each step's status:
+The app has three panels; the outer two collapse with the arrow on their edge:
+
+- **Left:** the language model and the data source.
+- **Centre:** the step bar, a *Series in focus* picker (shown when several series are forecast), and one tab per
+  step with its controls, a table of every series' results, charts and downloads.
+- **Right:** what the agents report for the current step (one card per agent, with the series in focus folding
+  out below) and the step's chat.
 
 | Page | Agents | What you can change |
 |---|---|---|
-| 1 · Data | Time Index, Regularity | time column, target column, series (long format) |
-| 2 · Resampling | Resampling, Frequency | target frequency (1h – 1W), aggregation per bin |
+| 1 · Data | Time Index, Target, Covariates, Regularity | time column, target columns, series to forecast (long format), role of each other column (past / future / static / ignore) |
+| 2 · Resampling | Resampling, Frequency | target frequency (1h – 1W), aggregation per bin (for every series) |
 | 3 · Holidays | Holidays | country and state (default US), official / unofficial holidays, days before and after (0–14); download the suggested holiday covariates |
-| 4 · Outliers | Outliers | sensitivity; per flagged point: keep, remove or replace with another value (or apply the suggestions to all) |
-| 5 · Missing values | Missing Values | fill method; download the prepared series (with holiday covariates) as CSV |
+| 4 · Outliers | Outliers | sensitivity; per flagged point of the series in focus: keep, remove or replace (or apply the suggestions to every series) |
+| 5 · Missing values | Missing Values | fill method; download every prepared series as one long-format CSV with covariates and the forecast-horizon rows |
 | Agents | — | the catalogue below |
 
-Each page opens with a **chat**. You can type a change instead of using the controls, or ask about the series:
+**One series or many.** The Target agent forecasts one value column by default, every series in long-format data
+(up to 50), or the columns you pick. From Regularity on, each agent runs on every series; its card in the right
+panel sums up the decisions (the most severe one sets the status) and the LLM explains them in one call, so the
+cost of the language model does not grow with the number of series. A series that cannot continue (say, too few
+points after resampling) stops on its own; the others carry on.
+
+**Covariates.** The Covariates agent sorts the other columns: *future* covariates are known in advance (they have
+values on the rows after the last observed target, are calendar features, or their name says they are planned:
+price, promo, event…), *past* covariates are only known up to now, *static* ones are fixed per series, and
+id-like, constant or mostly empty columns are not used. Change any role in the table on the Data tab.
+
+Each step has a **chat** in the right panel. You can type a change instead of using the controls, or ask about the series:
 
 | Page | Example prompts |
 |---|---|
-| Data | “use temp as the target”, “switch to store_2”, “how many points are there?” |
+| Data | “use temp as the target”, “forecast sales and visits”, “forecast all series”, “switch to store_2”, “how many points are there?” |
 | Resampling | “resample to 6 hours with sum”, “daily, max per day”, “what is the mean?” |
 | Holidays | “use Germany”, “only California”, “include unofficial holidays”, “check 3 days around holidays” |
 | Outliers | “apply the suggestions”, “remove all outliers”, “keep them all”, “be more sensitive” |
@@ -75,6 +91,8 @@ re-runs that step and is kept when you switch pages.
 flowchart LR
   data["CSV data"]
   time_index["Time Index Agent"]
+  target["Target Agent"]
+  covariates["Covariates Agent"]
   regularity["Regularity Agent"]
   resampling["Resampling Agent"]
   frequency["Frequency Agent"]
@@ -84,8 +102,10 @@ flowchart LR
   stop["Stop & ask user"]
   next["Next agents (planned)"]
   data --> time_index
-  time_index -->|found / ambiguous| regularity
+  time_index -->|found / ambiguous| target
   time_index -->|not_found| stop
+  target -->|single / multiple series| covariates
+  covariates -->|each series from here on| regularity
   regularity -->|irregular / you pick a frequency| resampling
   regularity -->|regular / with gaps| frequency
   regularity -->|insufficient_data| stop
@@ -99,15 +119,16 @@ flowchart LR
 
 ### 1. Time Index Agent
 
-Finds the column that holds the timestamps, the numeric column to forecast and, for long-format data, the column that identifies each series.
+Finds the column that holds the timestamps and, for long-format data, the column that identifies each series.
 
 | Property | Details |
 |---|---|
 | Page | Data |
 | Runs when | Always (first agent). |
+| Runs on | the whole dataset |
 | Inputs | Uploaded or sample CSV (any column names) |
-| Outputs | Time column and how it was parsed (ISO, day-first, epoch s/ms, YYYYMMDD, mixed)<br>Ranked time-column candidates with parse rate and score<br>Target column<br>Series-id column and number of series (long format) |
-| User controls | Time column<br>Target column<br>Series to analyse (long format) |
+| Outputs | Time column and how it was parsed (ISO, day-first, epoch s/ms, YYYYMMDD, mixed)<br>Ranked time-column candidates with parse rate and score<br>Series-id column and number of series (long format) |
+| User controls | Time column |
 | Tools | `tools.time_index.detect_time_column`<br>`tools.time_index.parse_time_column` |
 
 | Decision | Meaning |
@@ -116,7 +137,47 @@ Finds the column that holds the timestamps, the numeric column to forecast and, 
 | `ambiguous` | Several plausible time columns; the best one is used, but you should confirm it. |
 | `not_found` | No column parses as dates; the pipeline stops. |
 
-### 2. Regularity Agent
+### 2. Target Agent
+
+Chooses what to forecast: one value column or several, and in long-format data one series per id (all of them by default). Rows after a series' last observed value are kept apart as the forecast horizon.
+
+| Property | Details |
+|---|---|
+| Page | Data |
+| Runs when | After a time column is found. |
+| Runs on | the whole dataset |
+| Inputs | Numeric columns and the series-id column<br>Your choice of target columns and series |
+| Outputs | Target columns and series to forecast<br>Single or multiple series<br>Forecast-horizon rows (future rows without a target value) |
+| User controls | Target columns<br>Series to forecast (long format) |
+| Tools | `tools.targets.target_candidates`<br>`tools.targets.choose_targets`<br>`tools.targets.choose_series`<br>`tools.targets.build_series` |
+
+| Decision | Meaning |
+|---|---|
+| `single` | One series is forecast. |
+| `multiple` | Several series are forecast at once; every later agent runs on each of them. |
+| `capped` | More than 50 series; the 50 longest are used. |
+| `timestamps_only` | No numeric column to forecast; only the timestamps are analysed. |
+
+### 3. Covariates Agent
+
+Sorts every column that is not the time, id or target into past covariates (known only up to now), future covariates (known in advance: values on future rows, calendar or planned columns such as prices and promotions), static covariates (one value per series) or unused.
+
+| Property | Details |
+|---|---|
+| Page | Data |
+| Runs when | After the targets are chosen. |
+| Runs on | the whole dataset |
+| Inputs | Columns other than time, series id and targets<br>Forecast-horizon rows from the Target agent<br>Your role per column |
+| Outputs | Role and reason per column<br>Lists of past, future and static covariates |
+| User controls | Role per column (past / future / static / not used) |
+| Tools | `tools.covariates.classify_covariates`<br>`tools.covariates.covariate_frame` |
+
+| Decision | Meaning |
+|---|---|
+| `found` | At least one column can be used as a covariate. |
+| `none` | No other usable column; the model uses the target's own history (plus holiday covariates). |
+
+### 4. Regularity Agent
 
 Checks whether the timestamps follow a fixed frequency, including calendar frequencies (business days, month/quarter/year starts and ends), and flags duplicates, gaps and unsorted data.
 
@@ -124,6 +185,7 @@ Checks whether the timestamps follow a fixed frequency, including calendar frequ
 |---|---|
 | Page | Data |
 | Runs when | After a time column is found. |
+| Runs on | each series |
 | Inputs | Parsed timestamps of one series |
 | Outputs | Status and detected frequency alias<br>Coverage and share of timestamps on the grid<br>Missing-timestamp count, duplicate count, largest gap<br>Spacing statistics (min/median/max delta) |
 | User controls | — |
@@ -136,7 +198,7 @@ Checks whether the timestamps follow a fixed frequency, including calendar frequ
 | `irregular` | No fixed grid fits; the Resampling agent runs next. |
 | `insufficient_data` | Fewer than 3 distinct timestamps; the pipeline stops. |
 
-### 3. Resampling Agent
+### 5. Resampling Agent
 
 Converts irregularly spaced observations into a fixed-frequency series between 1 hour and 1 week, using your choice of frequency and aggregation. Empty bins are left as missing timestamps for the Missing Values agent.
 
@@ -144,6 +206,7 @@ Converts irregularly spaced observations into a fixed-frequency series between 1
 |---|---|
 | Page | Resampling |
 | Runs when | When the Regularity agent says the series is irregular, or when you pick a frequency for a regular series (e.g. aggregate hourly data to daily). |
+| Runs on | each series |
 | Inputs | Series from the Data page<br>Your resampling preferences (page controls or chat) |
 | Outputs | Chosen frequency and whether it was yours or auto-recommended<br>Data points, bins and empty-bin share for every candidate frequency<br>The resampled series, empty bins dropped (replaces the raw one for later agents) |
 | User controls | Target frequency: auto or h, 2h, 3h, 4h, 6h, 12h, D, 2D, 3D, W (controls or chat)<br>Aggregation: mean, sum, median, min, max, first, last, count (controls or chat) |
@@ -155,7 +218,7 @@ Converts irregularly spaced observations into a fixed-frequency series between 1
 | `sparse` | Enough points, but over half the bins are empty; a coarser frequency is suggested. |
 | `too_few_points` | Fewer than 30 data points; finer frequencies are suggested and the pipeline stops. |
 
-### 4. Frequency Agent
+### 6. Frequency Agent
 
 Names the sampling frequency in plain words and as a pandas alias, lists missing timestamps and gap runs, and proposes the seasonal periods later agents should test.
 
@@ -163,6 +226,7 @@ Names the sampling frequency in plain words and as a pandas alias, lists missing
 |---|---|
 | Page | Resampling |
 | Runs when | When a fixed frequency is known (detected by Regularity or produced by Resampling). |
+| Runs on | each series |
 | Inputs | Series with a known fixed frequency |
 | Outputs | Pandas alias and label (e.g. 'h' / hourly)<br>Expected vs observed points and coverage<br>Longest gap runs and a sample of missing timestamps<br>Candidate seasonal periods (e.g. hourly: 24, 168) |
 | User controls | — |
@@ -172,7 +236,7 @@ Names the sampling frequency in plain words and as a pandas alias, lists missing
 |---|---|
 | `<alias>` | The pandas frequency alias, e.g. h, D, B, W-SUN, MS, QS-JAN. The status is a warning if timestamps are missing. |
 
-### 5. Holidays Agent
+### 7. Holidays Agent
 
 Compares each holiday, and the days around it, with a same-weekday baseline to find out whether holidays move the series. If they do, it suggests holiday covariates for the forecasting model and tells the Outliers agent to leave those days alone.
 
@@ -180,6 +244,7 @@ Compares each holiday, and the days around it, with a same-weekday baseline to f
 |---|---|
 | Page | Holidays |
 | Runs when | When a fixed frequency of one day or finer is known and the series has values (after Frequency). |
+| Runs on | each series |
 | Inputs | Fixed-frequency series (daily or finer)<br>Country and state, official and/or unofficial holidays, days around each holiday (page or chat) |
 | Outputs | Holidays in the data and whether they move the series (overall test and per holiday)<br>Effects on the days before and after a holiday (e.g. a shopping run-up)<br>Suggested 0/1 covariates: is_holiday plus one column per detected effect (CSV download)<br>Holiday-affected days, which the Outliers agent never flags |
 | User controls | Country (default United States) and state / region<br>Holiday types: Official (public holidays), Unofficial (observances, other days)<br>Days before and after each holiday to check (0–14, default 7) |
@@ -193,7 +258,7 @@ Compares each holiday, and the days around it, with a same-weekday baseline to f
 | `too_few_holidays` | Fewer than 3 holidays fall inside the data, too few to judge. |
 | `not_applicable` | The frequency is coarser than a day (weeks, months), so single days can't be seen. |
 
-### 6. Outliers Agent
+### 8. Outliers Agent
 
 Compares every value with what the trend and seasonal pattern predict and flags the ones that are far off. You decide per point: keep it, remove it (the Missing Values agent then fills the gap) or replace it with another value. Nothing changes until you choose.
 
@@ -201,6 +266,7 @@ Compares every value with what the trend and seasonal pattern predict and flags 
 |---|---|
 | Page | Outliers |
 | Runs when | When a fixed frequency is known and the series has values (after the Holidays agent). |
+| Runs on | each series |
 | Inputs | Fixed-frequency series<br>Holiday-affected days from the Holidays agent<br>Sensitivity and your keep / remove / replace choices (page or chat) |
 | Outputs | Flagged points with their value, expected value and robust z-score<br>A suggestion per point (replace when |z| ≥ 5, otherwise keep)<br>Holiday-affected points that were left alone<br>The series with your choices applied (removed points become gaps for the Missing Values agent) |
 | User controls | Sensitivity: High (|z| > 3), Normal (|z| > 3.5), Low (|z| > 5)<br>Per point: Keep / Remove / Replace with a replacement value<br>All at once: keep all, remove all, replace all, apply suggestions (buttons or chat) |
@@ -212,7 +278,7 @@ Compares every value with what the trend and seasonal pattern predict and flags 
 | `flagged` | Some values look like outliers and you haven't decided about all of them yet; they are kept until you do. |
 | `handled` | You decided about every flagged point; your choices are applied. |
 
-### 7. Missing Values Agent
+### 9. Missing Values Agent
 
 Puts the series on its complete fixed-frequency grid, counts missing timestamps and empty values, and fills them with your chosen method or a rule-based recommendation.
 
@@ -220,6 +286,7 @@ Puts the series on its complete fixed-frequency grid, counts missing timestamps 
 |---|---|
 | Page | Missing values |
 | Runs when | When a fixed frequency is known and the series has values (after the Frequency agent). |
+| Runs on | each series |
 | Inputs | Fixed-frequency series (regular, or resampled with empty bins dropped)<br>Your fill method (page control or chat) |
 | Outputs | Missing timestamps, missing values and the share of the grid they cover<br>Longest gap runs, duplicates merged, off-grid timestamps dropped<br>Fill method and whether it was yours or auto-recommended<br>The complete, filled series (replaces the previous one for later agents) |
 | User controls | Fill method: auto, leave missing, forward fill, backward fill, interpolate in time, zero, seasonal naive (value one season earlier) (control or chat) |
@@ -337,12 +404,12 @@ uv run pytest -m slow                    # also loads the real LLM
 
 ```
 app.py                       Gradio entry (imports the ZeroGPU model first on a ZeroGPU Space)
-src/fcagents/webui.py        Gradio UI: sidebar, one tab per step, result cards, charts, chat
+src/fcagents/webui.py        Gradio UI: left settings panel, step tabs, right agents + chat panel
 src/fcagents/session.py      one visitor's state: data, settings, cached stage results, chat (no UI code)
 src/fcagents/chat/           page chat: rule parser, validated LLM router, stats-grounded answers
-src/fcagents/tools/          deterministic tools (time_index, frequency, resample, missing)
+src/fcagents/tools/          deterministic tools (time_index, targets, covariates, frequency, resample, holidays, outliers, missing)
 src/fcagents/agents/         one agent per pipeline step, each carrying its own catalogue metadata
-src/fcagents/core/           BaseAgent / AgentResult / PipelineState
+src/fcagents/core/           BaseAgent / AgentResult / PipelineState; multi.py runs an agent per series
 src/fcagents/llm/            LLM backends (ZeroGPU model, in-app CPU model, local OpenAI-compatible server, HF Inference Providers with the user's token, or none)
 src/fcagents/orchestrator.py stages (one per page), pipeline order and routing
 src/fcagents/catalog.py      agent catalogue: app tab, README section, flow diagram

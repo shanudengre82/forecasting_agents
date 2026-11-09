@@ -107,7 +107,8 @@ def test_stages_rerun_from_a_saved_state():
     daily = {r.agent: r for r, _ in run_stage("resampling", data_state, resample_freq="D", resample_agg="sum")}
     assert hourly["resampling"].status == "skipped" and hourly["frequency"].decision == "h"
     assert daily["resampling"].decision == "resampled" and daily["frequency"].decision == "D"
-    assert data_state.freq == "h" and len(data_state.series) == 24 * 40  # input state untouched
+    child = data_state.child()
+    assert child.freq == "h" and len(child.series) == 24 * 40  # input state untouched
 
 
 def test_stop_carries_across_stages():
@@ -125,14 +126,53 @@ def test_no_time_column_stops():
     assert res["frequency"].status == "skipped"
 
 
-def test_long_format_picks_one_series():
+def test_long_format_forecasts_every_series_by_default():
     idx = pd.date_range("2024-01-01", periods=30, freq="D")
     df = pd.concat([_frame(idx, unique_id="a"), _frame(idx[:20], unique_id="b")])
     res = _run(df)
-    assert res["time_index"].facts["series_id"] == "a"
+    assert res["target"].decision == "multiple" and res["target"].facts["series"] == ["a", "b"]
     assert res["regularity"].decision == "regular"
+    assert set(res["regularity"].extras["per_series"]) == {"a", "b"}
+    assert res["regularity"].facts["decisions"] == {"regular": 2}
     res_b = _run(df, series_id="b")
-    assert res_b["time_index"].facts["series_id"] == "b"
+    assert res_b["target"].decision == "single" and res_b["target"].facts["series"] == ["b"]
+    assert "per_series" not in res_b["regularity"].extras
+
+
+def test_one_series_stopping_does_not_stop_the_others():
+    long_idx = pd.date_range("2024-01-01", periods=60, freq="D")
+    df = pd.concat([_frame(long_idx, unique_id="long"), _frame(long_idx[:2], unique_id="short")])
+    res = _run(df)
+    per = res["regularity"].extras["per_series"]
+    assert per["short"].decision == "insufficient_data" and per["long"].decision == "regular"
+    assert res["regularity"].status == "error" and res["regularity"].decision == "insufficient_data"
+    mv = res["missing_values"].extras["per_series"]
+    assert mv["short"].status == "skipped" and mv["long"].decision == "complete"
+
+
+def test_combined_results_use_one_llm_call_per_agent():
+    class CountingLLM:
+        name, available, calls = "count", True, 0
+
+        def generate(self, system, user, max_new_tokens=120):
+            CountingLLM.calls += 1
+            return "ok"
+
+    idx = pd.date_range("2024-01-01", periods=60, freq="D")
+    df = pd.concat([_frame(idx, unique_id=k) for k in "abcd"])
+    results = [r for r, _ in run_pipeline(df, llm=CountingLLM())]
+    ran = [r for r in results if r.status != "skipped"]
+    assert CountingLLM.calls == len(ran)
+    assert all(r.explanation == "ok" for r in ran)
+
+
+def test_wide_format_with_several_targets():
+    idx = pd.date_range("2024-01-01", periods=60, freq="D")
+    df = _frame(idx).assign(sales=np.arange(60.0), temperature=np.sin(np.arange(60)))
+    res = _run(df, targets=("y", "sales"))
+    assert res["target"].facts["series"] == ["y", "sales"]
+    assert res["covariates"].facts["past"] == ["temperature"]
+    assert res["frequency"].facts["decisions"] == {"D": 2}
 
 
 @pytest.mark.slow

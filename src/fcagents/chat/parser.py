@@ -141,10 +141,18 @@ def _parse_data(text: str, ctx: dict) -> list[Action]:
             actions.append(Action("time_col", col))
         elif col in target_cols:
             actions.append(Action("target_col", col))
-    for sid in ctx.get("series_ids", []):
-        if _mentions(sid, text):
-            actions.append(Action("series_id", str(sid)))
-            break
+    targets = [a.value for a in actions if a.key == "target_col"]
+    if len(targets) > 1 or (targets and re.search(r"\b(add|also|targets|both)\b", text, re.I)):
+        current = [] if len(targets) > 1 else list(ctx.get("targets", []))
+        actions = [a for a in actions if a.key != "target_col"]
+        actions.append(Action("targets", ",".join(dict.fromkeys(current + targets))))
+    if re.search(r"\b(all|every|each)\s+(the\s+)?(series|stores?|ids?|items?|products?)\b", text, re.I):
+        actions.append(Action("series_scope", "all"))
+    else:
+        for sid in ctx.get("series_ids", []):
+            if _mentions(sid, text):
+                actions.append(Action("series_id", str(sid)))
+                break
     return list({a.key: a for a in actions}.values())
 
 

@@ -13,6 +13,7 @@ from fcagents.tools.resample import (
 
 class ResamplingAgent(BaseAgent):
     name = "resampling"
+    per_series = True
     title = "Resampling Agent"
     task = "Convert an irregularly sampled series onto a fixed frequency between 1 hour and 1 week."
     scope = ("Do not invent point counts. Explain the trade-off: finer frequencies give more points but more "

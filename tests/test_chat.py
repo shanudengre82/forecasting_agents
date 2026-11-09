@@ -27,6 +27,8 @@ CTX = {"time_cols": ["ds"], "target_cols": ["y", "temp"], "series_ids": ["store_
     ("missing", "put nothing in the holes", {"fill_method": "none"}),
     ("data", "use temp as target", {"target_col": "temp"}),
     ("data", "switch to store_2", {"series_id": "store_2"}),
+    ("data", "forecast y and temp", {"targets": "y,temp"}),
+    ("data", "forecast all series", {"series_scope": "all"}),
 ])
 def test_parser_commands(page, text, expected):
     res = parse_command(text, page, CTX)

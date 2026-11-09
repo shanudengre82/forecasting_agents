@@ -11,8 +11,10 @@ STOP, NEXT = "stop", "next"
 # Pipeline flow: (from, to, condition). Mirrors orchestrator routing and each agent's applies().
 EDGES = [
     ("data", "time_index", ""),
-    ("time_index", "regularity", "found / ambiguous"),
+    ("time_index", "target", "found / ambiguous"),
     ("time_index", STOP, "not_found"),
+    ("target", "covariates", "single / multiple series"),
+    ("covariates", "regularity", "each series from here on"),
     ("regularity", "resampling", "irregular / you pick a frequency"),
     ("regularity", "frequency", "regular / with gaps"),
     ("regularity", STOP, "insufficient_data"),
@@ -40,6 +42,7 @@ def agent_catalog() -> list[dict]:
             "title": a.title,
             "summary": a.summary,
             "runs_when": a.runs_when,
+            "per_series": a.per_series,
             "inputs": list(a.inputs),
             "outputs": list(a.outputs),
             "decisions": dict(a.decisions),
@@ -85,6 +88,7 @@ def catalog_markdown() -> str:
             "|---|---|",
             f"| Page | {a['page']} |",
             f"| Runs when | {a['runs_when']} |",
+            f"| Runs on | {'each series' if a['per_series'] else 'the whole dataset'} |",
             f"| Inputs | {_cell(a['inputs'])} |",
             f"| Outputs | {_cell(a['outputs'])} |",
             f"| User controls | {_cell(a['user_controls'])} |",

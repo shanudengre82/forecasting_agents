@@ -106,7 +106,7 @@ def test_outliers_bulk_then_missing_fills_removed_points():
     s = _session("daily_sales_holidays.csv")
     s.send("outliers", "apply the suggestions")
     assert _decisions(s, "outliers")["outliers"] == "handled"
-    assert sum(a == "replace" for _, a, _ in s.prefs["outlier_actions"]) == 6
+    assert sum(a == "replace" for _, _, a, _ in s.prefs["outlier_actions"]) == 6
     s.send("outliers", "remove all outliers")
     assert _decisions(s, "outliers")["outliers"] == "handled"
     assert _decisions(s, "missing")["missing_values"] == "filled"
@@ -120,3 +120,37 @@ def test_stage_status_goes_stale_when_an_earlier_step_changes():
     s.prefs["time_col"] = "something-else"  # any change to the Data step's settings
     s.ensure_stage("data")
     assert s.stage_status("resampling") == "pending"
+
+
+def test_multi_series_focus_and_per_series_outlier_choices():
+    s = _session("store_demand_covariates.csv")
+    assert s.series_keys() == ["north", "south", "east"] and s.focus() == "north"
+    s.send("data", "switch to south")
+    assert s.focus() == "south"
+    s.ensure_stage("outliers")
+    table = s.outlier_table("south")
+    ts = table.index[0].isoformat()
+    s.set_outlier_actions("south", ((ts, "remove", None),))
+    s.set_outlier_actions("north", ())
+    assert s.prefs["outlier_actions"] == (("south", ts, "remove", None),)
+    per = s.ensure_stage("outliers")[1][0].extras["per_series"]
+    assert per["south"].facts["n_removed"] == 1 and per["north"].facts["n_removed"] == 0
+
+
+def test_chat_targets_and_series_scope():
+    s = _session("multi_store_long.csv")
+    s.send("data", "switch to store_2")
+    assert s.focus() == "store_2" and s.prefs["series_ids"] is None
+    s.prefs["series_ids"] = ("store_1",)
+    s.send("data", "forecast all series")
+    assert s.prefs["series_ids"] is None and len(s.series_keys()) == 3
+
+
+def test_export_has_every_series_covariates_and_horizon():
+    s = _session("store_demand_covariates.csv")
+    frame = s.export_frame()
+    assert list(frame.columns[:3]) == ["series", "timestamp", "value"]
+    assert set(frame["series"]) == {"north", "south", "east"}
+    assert {"temperature", "promo", "price", "store_type"} <= set(frame.columns)
+    future = frame[frame["value"].isna()]
+    assert len(future) == 42 and future["promo"].notna().all() and future["temperature"].isna().all()

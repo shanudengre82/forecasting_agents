@@ -82,6 +82,11 @@ _CSS = """
 .fc-card pre { white-space: pre-wrap; font-size: 0.8rem; max-height: 22rem; overflow: auto;
   background: var(--fc-bench); padding: 0.5rem; border-radius: 4px; }
 .fc-next { margin-top: 0.4rem; }
+.fc-focus { margin-top: 0.6rem; }
+.fc-focus > summary { cursor: pointer; font-weight: 600; color: var(--fc-muted); }
+.fc-focus .fc-card { margin: 0.5rem 0 0; border-style: dashed; }
+#fc-right .fc-card-title { font-size: 1.1rem !important; }
+.fc-intro { color: var(--fc-muted); margin-top: 0; }
 .fc-warn { border-left: 3px solid var(--fc-warn); padding: 0.4rem 0.7rem; background: var(--fc-bench); }
 .fc-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1.5rem; }
 .fc-card-name { display: flex; align-items: center; gap: 0.6rem; flex: 1 1 14rem; min-width: 0; }
