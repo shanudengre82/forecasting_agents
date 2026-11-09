@@ -9,7 +9,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "pandas>=2.2",
     "numpy>=1.26",
-    "streamlit>=1.40",
+    "gradio>=6.31",
     "plotly>=5.24",
     "huggingface_hub>=0.30",
     "holidays>=0.60",

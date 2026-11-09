@@ -3,8 +3,10 @@ title: Forecasting Agents
 emoji: 📈
 colorFrom: blue
 colorTo: indigo
-sdk: docker
-app_port: 7860
+sdk: gradio
+sdk_version: 6.31.0
+app_file: app.py
+python_version: "3.12"
 pinned: false
 license: apache-2.0
 short_description: Small-LLM agents that prepare time series for forecasting
@@ -13,19 +15,20 @@ short_description: Small-LLM agents that prepare time series for forecasting
 # Forecasting Agents
 
 A demo of LLM-assisted agents that together form an end-to-end time series forecasting pipeline,
-served as a Streamlit app that runs locally, in Docker, or on a Hugging Face Space.
+served as a Gradio app that runs locally, in Docker, or on a Hugging Face ZeroGPU Space.
 
 Deterministic tools (pandas/numpy) compute every fact and rule-based logic makes every decision.
 An LLM then explains what the result means, so the model never has to compute anything. You choose the LLM in
 the sidebar. Locally, that is a small model running inside the app on CPU (default `Qwen/Qwen2.5-0.5B-Instruct`) or
-a model you serve yourself with Ollama, vLLM or LM Studio. On the Hugging Face Space you can also use any chat model
+a model you serve yourself with Ollama, vLLM or LM Studio. On the Hugging Face Space the same small model runs on
+ZeroGPU (free), and you can also use any chat model
 served by [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers), called with
-**your own** Hugging Face token (see [Language model & tokens](#language-model--tokens)). The app's **Agents** page shows the same
+**your own** Hugging Face token (see [Language model & tokens](#language-model--tokens)). The app's **Agents** tab shows the same
 catalogue as below.
 
 ## Pages & chat
 
-The language model and the data source sit at the top of the sidebar. The pipeline runs as one page per step,
+The language model and the data source sit at the top of the sidebar. The pipeline runs as one tab per step,
 with Back/Next buttons and a step bar that shows each step's status:
 
 | Page | Agents | What you can change |
@@ -265,13 +268,13 @@ scripts/container_smoke_test.sh lite             # or: full
 | `MODEL_ID` | `Qwen/Qwen2.5-0.5B-Instruct` | Default local model. Others typed in the sidebar download on first use into `/home/user/.cache/huggingface`. |
 | `HF_API_MODEL` | `Qwen/Qwen2.5-7B-Instruct` | Default hosted model for the `api` backend; users can type any other model id |
 | `USE_LLM` | `1` (`0` in lite) | Whether the "Use an LLM" toggle starts on |
-| `STREAMLIT_SERVER_PORT` | `7860` | Port the app listens on inside the container |
+| `GRADIO_SERVER_PORT` | `7860` | Port the app listens on inside the container |
 | `PORT` (compose only) | `7860` | Host port mapped to the full service |
 
 Build arg `PRELOAD_MODEL` chooses which model is baked into the `full` image,
 for example `--build-arg PRELOAD_MODEL=Qwen/Qwen2.5-1.5B-Instruct`.
-The container runs as uid 1000 and exposes a Docker `HEALTHCHECK` on `/_stcore/health`.
-The same image runs unchanged as a Hugging Face Docker Space; the frontmatter above sets `app_port: 7860`.
+The container runs as uid 1000 and exposes a Docker `HEALTHCHECK` on `/`.
+The Docker image is for running the app yourself; the Hugging Face Space uses the Gradio SDK (see below).
 
 ## Language model & tokens
 
@@ -280,7 +283,8 @@ variable that Hugging Face sets.
 
 | Backend | Where | Model | Token |
 |---|---|---|---|
-| Local model (in-app, CPU) | Everywhere | Any public chat model id (default `MODEL_ID`) | None. Downloads use `token=False`, so a host token is never sent |
+| ZeroGPU model | ZeroGPU Space only | The app's own model (`MODEL_ID`), loaded at startup | None. Uses the visitor's free ZeroGPU quota |
+| Local model (in-app, CPU) | Local runs and non-ZeroGPU Spaces | Any public chat model id (default `MODEL_ID`) | None. Downloads use `token=False`, so a host token is never sent |
 | Local LLM server | Local runs only | Any model your Ollama, vLLM or LM Studio server lists at `LOCAL_LLM_URL` | None. A dummy key is sent, never `HF_TOKEN` |
 | Hugging Face API | Hugging Face Space only | Any model served by Inference Providers (default `HF_API_MODEL`), plus a provider | The visitor's own token, billed to their HF account |
 
@@ -290,7 +294,7 @@ app would let visitors make the server call any host.
 **Use Ollama locally:**
 ```bash
 ollama pull qwen2.5:0.5b          # any model works; the sidebar lists what the server has
-uv run streamlit run app.py       # then pick “Local LLM server” in the sidebar
+uv run python app.py              # then pick “Local LLM server” in the sidebar
 ```
 
 **Tokens always belong to the user, never to the app.** The hosted backend is built only from the token typed into the
@@ -303,24 +307,28 @@ To get a token, open <https://huggingface.co/settings/tokens>, create a **fine-g
 
 ## Deploy to a Hugging Face Space
 
-1. Create a new Space at <https://huggingface.co/new-space> and choose the **Docker** SDK (blank template). The
-   frontmatter at the top of this README configures it (`sdk: docker`, `app_port: 7860`).
-2. Push this repository to it:
+The Space runs on **ZeroGPU** with the **Gradio** SDK, which free accounts can host. The frontmatter at the top of
+this README configures it (`sdk: gradio`, `app_file: app.py`), and `requirements.txt` lists what the Space installs
+(Gradio, `spaces`, `huggingface_hub` and PyTorch are provided by the platform).
+
+1. Create a Space at <https://huggingface.co/new-space>: SDK **Gradio**, hardware **ZeroGPU**.
+2. GitHub Actions pushes `main` to the Space after CI passes (`.github/workflows/sync-to-hf.yml`). Add a write token
+   as the repository secret `HF_TOKEN` and set the Space id in that workflow. Or push by hand:
    ```bash
    git remote add space https://huggingface.co/spaces/<your-user>/<space-name>
    git push space main          # authenticate with your HF username + a write token
    ```
-   The Space builds the `full` stage (the last one in the `Dockerfile`), so the local model is baked in.
-3. Optional: under *Settings → Variables*, set `LLM_BACKEND`, `HF_API_MODEL`, `MODEL_ID` or `USE_LLM`.
-   These are plain **variables**. **Do not add an `HF_TOKEN` secret.** The app ignores it for LLM calls by design,
-   because every visitor uses their own token.
-4. Open the Space, choose **Hugging Face API (your token)** in the sidebar, enter a model id and paste your token.
+3. Optional: under *Settings → Variables*, set `LLM_BACKEND` (`zerogpu` or `api`), `HF_API_MODEL`, `MODEL_ID` or
+   `USE_LLM`. These are plain **variables**. **Do not add an `HF_TOKEN` secret to the Space.** The app ignores it for
+   LLM calls by design, because every visitor uses their own token.
+4. Open the Space. The ZeroGPU model explains the results out of the box; visitors can switch to
+   **Hugging Face API (your token)** for larger models.
 
 ## Run locally
 
 ```bash
 uv sync --extra llm                      # drop --extra llm for a rule-only install
-uv run streamlit run app.py
+uv run python app.py                     # → http://localhost:7860
 uv run pytest                            # fast tests (no model)
 uv run pytest -m slow                    # also loads the real LLM
 ```
@@ -328,14 +336,14 @@ uv run pytest -m slow                    # also loads the real LLM
 ## Layout
 
 ```
-app.py                       Streamlit entry: sidebar (language model, data) and page navigation
-views/                       one file per page: data, resampling, missing, agents
-src/fcagents/ui.py           shared page helpers: stage caching, chat panel, result cards, charts
+app.py                       Gradio entry (imports the ZeroGPU model first on a ZeroGPU Space)
+src/fcagents/webui.py        Gradio UI: sidebar, one tab per step, result cards, charts, chat
+src/fcagents/session.py      one visitor's state: data, settings, cached stage results, chat (no UI code)
 src/fcagents/chat/           page chat: rule parser, validated LLM router, stats-grounded answers
 src/fcagents/tools/          deterministic tools (time_index, frequency, resample, missing)
 src/fcagents/agents/         one agent per pipeline step, each carrying its own catalogue metadata
 src/fcagents/core/           BaseAgent / AgentResult / PipelineState
-src/fcagents/llm/            LLM backends (in-app CPU model, local OpenAI-compatible server, HF Inference Providers with the user's token, or none)
+src/fcagents/llm/            LLM backends (ZeroGPU model, in-app CPU model, local OpenAI-compatible server, HF Inference Providers with the user's token, or none)
 src/fcagents/orchestrator.py stages (one per page), pipeline order and routing
 src/fcagents/catalog.py      agent catalogue: app tab, README section, flow diagram
 scripts/                     sample generator, README renderer, container smoke test

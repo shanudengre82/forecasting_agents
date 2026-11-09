@@ -1,14 +1,12 @@
 """Visual tokens for the "instrument" look, shared by the page CSS and the Plotly charts.
 
-Colours mirror .streamlit/config.toml. Meaning is fixed everywhere: trace = observed data, estimate = filled
+Meaning is fixed everywhere: trace = observed data, estimate = filled
 values, warn = missing timestamps / needs attention, ok / error = agent status.
 """
 
 from __future__ import annotations
 
 import html
-
-import streamlit as st
 
 LIGHT = {
     "bench": "#E9EDF0", "panel": "#FFFFFF", "ink": "#17222C", "muted": "#5B6976", "rule": "#C5CFD7",
@@ -32,15 +30,9 @@ LAMP = {
 }
 
 
-def is_dark() -> bool:
-    try:
-        return st.context.theme.type == "dark"
-    except Exception:  # bare mode / tests
-        return False
-
-
 def palette() -> dict[str, str]:
-    return DARK if is_dark() else LIGHT
+    """Chart colours. Charts use the light palette; the page CSS follows the light/dark mode."""
+    return LIGHT
 
 
 def esc(value) -> str:
@@ -52,19 +44,12 @@ def lamp(status: str) -> str:
     return f'<span class="fc-lamp" style="--lamp: var(--fc-{token})" role="img" aria-label="{label}"></span>'
 
 
-def inject_css() -> None:
-    p = palette()
-    tokens = "".join(f"--fc-{k}: {v};" for k, v in p.items())
-    st.html(f"<style>:root {{ {tokens} }}\n{_CSS}</style>")
-
-
 _CSS = """
-.stApp h1, .stApp h2, .stApp h3, .stApp h4, .fc-strip, .fc-card-title, .fc-readouts dt, .fc-brand {
+.fc-strip, .fc-card-title, .fc-readouts dt, .fc-brand {
   font-stretch: 75%;
 }
-.stApp h1, .stApp h2 { letter-spacing: -0.01em; }
-.fc-num, .fc-readouts dd, .stApp [data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
-.stApp :focus-visible { outline: 2px solid var(--fc-trace) !important; outline-offset: 2px; }
+.fc-num, .fc-readouts dd { font-variant-numeric: tabular-nums; }
+.gradio-container :focus-visible { outline: 2px solid var(--fc-trace) !important; outline-offset: 2px; }
 
 .fc-brand { margin: 0; font-size: 0.95rem; font-weight: 600; color: var(--fc-muted); }
 
@@ -90,7 +75,14 @@ _CSS = """
 }
 
 /* Agent channel card */
-[class*="st-key-fccard"], [class*="st-key-fcchat"] { background: var(--fc-panel); }
+.fc-card { background: var(--fc-panel); border: 1px solid var(--fc-rule); border-radius: 8px;
+  padding: 0.9rem 1rem; margin: 0 0 0.75rem; color: var(--fc-ink); }
+.fc-card p { margin: 0.4rem 0; }
+.fc-card details { margin-top: 0.5rem; }
+.fc-card pre { white-space: pre-wrap; font-size: 0.8rem; max-height: 22rem; overflow: auto;
+  background: var(--fc-bench); padding: 0.5rem; border-radius: 4px; }
+.fc-next { margin-top: 0.4rem; }
+.fc-warn { border-left: 3px solid var(--fc-warn); padding: 0.4rem 0.7rem; background: var(--fc-bench); }
 .fc-card-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.5rem 1.5rem; }
 .fc-card-name { display: flex; align-items: center; gap: 0.6rem; flex: 1 1 14rem; min-width: 0; }
 .fc-card-title { margin: 0 !important; padding: 0 !important; font-size: 1.3rem !important; font-weight: 650; }
@@ -110,8 +102,17 @@ _CSS = """
   .fc-step-state { display: none; }
   .fc-step-name { font-size: 0.85rem; }
 }
-@media (prefers-reduced-motion: reduce) { .stApp * { transition: none !important; animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .gradio-container * { transition: none !important; animation: none !important; } }
 """
+
+
+def _tokens(p: dict[str, str]) -> str:
+    return "".join(f"--fc-{k}: {v};" for k, v in p.items())
+
+
+def css() -> str:
+    """Page CSS for gr.Blocks: colour tokens for light and dark mode, then the component rules."""
+    return f":root {{ {_tokens(LIGHT)} }}\n.dark {{ {_tokens(DARK)} }}\n{_CSS}"
 
 
 def plotly_layout(height: int = 360) -> dict:
