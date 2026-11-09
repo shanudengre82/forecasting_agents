@@ -3,6 +3,8 @@ name = "fcagents"
 version = "0.1.0"
 description = "LLM-assisted agents for an end-to-end time series forecasting pipeline"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "pandas>=2.2",

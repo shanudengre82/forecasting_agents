@@ -6,6 +6,7 @@ colorTo: indigo
 sdk: docker
 app_port: 7860
 pinned: false
+license: apache-2.0
 short_description: Small-LLM agents that prepare time series for forecasting
 ---
 
@@ -354,3 +355,7 @@ its settings in `chat/actions.py` and its words in `chat/parser.py`). Override `
 situations, and add a routing rule if it can stop the pipeline. Add its edges to `EDGES` in
 `catalog.py`, then run `uv run python scripts/render_agents_md.py` to refresh this README.
 A test fails if the README is out of date.
+
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).
