@@ -125,9 +125,7 @@ def configure_llm(sess: Session, use: bool, kind: str, local_model: str, url: st
 
 
 def llm_status(sess: Session, note: str = "") -> str:
-    out = f"Backend: `{sess.llm.name}`"
-    if note:
-        out = f"{note}\n\n{out}"
+    out = note
     if err := getattr(sess.llm, "last_error", None):
         out += f"\n\n**Last LLM call failed:** {err}"
     return out
@@ -151,9 +149,11 @@ def strip_html(sess: Session, stage: str) -> str:
         status = sess.stage_status(s)
         cls = " ".join(c for c in ("is-done" if i < current else "", "is-current" if i == current else "") if c)
         aria = ' aria-current="step"' if i == current else ""
-        items.append(f'<li class="{cls}"{aria}>{theme.lamp(status)}'
+        items.append(f'<li class="{cls}"><button type="button" data-fc-tab="{i}"{aria}>{theme.lamp(status)}'
                      f'<span class="fc-step-name">{i + 1}. {theme.esc(STAGE_TITLES[s])}</span>'
-                     f'<span class="fc-step-state">{theme.LAMP[status][1]}</span></li>')
+                     f'<span class="fc-step-state">{theme.LAMP[status][1]}</span></button></li>')
+    items.append(f'<li class="fc-catalogue-item"><button type="button" data-fc-tab="{len(STAGE_ORDER)}">'
+                 f'<span class="fc-catalogue">Agent catalogue</span></button></li>')
     return (f'<nav class="fc-strip" aria-label="Pipeline steps"><ol>{"".join(items)}</ol></nav>'
             f'<h2>{theme.esc(STAGE_TITLES[stage])}</h2><p class="fc-intro">{theme.esc(INTROS[stage])}</p>')
 
@@ -189,7 +189,7 @@ def card_html(r) -> str:
         facts = theme.esc(json.dumps(r.facts, indent=2, default=str))
         prompt = f"<pre>{theme.esc(r.prompt)}</pre>" if r.prompt else ""
         parts.append(f"<details><summary>Facts &amp; prompt</summary><pre>{facts}</pre>{prompt}</details>")
-    return f'<div class="fc-card">{"".join(parts)}</div>'
+    return f'<div class="fc-card is-{theme.esc(r.status)}">{"".join(parts)}</div>'
 
 
 def cards_html(results: list) -> str:
@@ -583,7 +583,7 @@ def render(sess: Session, stage: str) -> dict[str, object]:
     """Everything shown for a step, by component name (centre and right panel). Runs agents if inputs changed."""
     pending = bool(sess.pending.get(stage))
     out = {"chat": chat_messages(sess, stage), "apply": gr.update(visible=pending),
-           "dismiss": gr.update(visible=pending), "hint": f"<small>{theme.esc(HINTS[stage])}</small>",
+           "dismiss": gr.update(visible=pending), "hint": f'<p class="fc-hint">{theme.esc(HINTS[stage])}</p>',
            "panel_title": f"### {STAGE_TITLES[stage]}"}
     if sess.df is None:
         empty = {k: gr.update() for k in VIEW_KEYS[stage]} | {"plot": None}
@@ -649,8 +649,8 @@ def _llm_sidebar() -> dict:
     samples = sample_names()
     c["sample"] = gr.Dropdown(samples, value=samples[0] if samples else None, label="Sample")
     c["upload"] = gr.File(label="CSV file", file_types=[".csv"], type="filepath", visible=False)
-    gr.Markdown("<small>Tools compute the facts, rules make the decisions, and the language model explains "
-                "them.</small>")
+    gr.Markdown('<p class="fc-hint">Tools compute the facts, rules make the decisions, and the language model '
+                "explains them.</p>")
     return c
 
 
@@ -670,7 +670,7 @@ def _tab_body(stage: str, names: dict) -> dict:
     elif stage == "resampling":
         with gr.Row():
             c["resample_freq"] = gr.Dropdown(
-                [("Auto (recommended)", "auto")] + [(f"{f} · {n}", f) for f, n in FREQ_OPTIONS.items()],
+                [("Auto (recommended)", "auto")] + [(f"{n} ({f})", f) for f, n in FREQ_OPTIONS.items()],
                 label="Target frequency (1h – 1W), for every series",
                 info=f"Finer frequencies give more data points. At least {MIN_POINTS} are needed.")
             c["resample_agg"] = gr.Dropdown(AGGREGATIONS, label="Aggregate values per bin",
@@ -731,7 +731,7 @@ def _tab_body(stage: str, names: dict) -> dict:
 def build_app() -> gr.Blocks:
     ui = Ui()
     names = countries()
-    with gr.Blocks(title="Forecasting Agents") as demo:
+    with gr.Blocks(title="Forecasting Agents", fill_width=True) as demo:
         sess = gr.State(lambda: Session())  # a factory: one fresh Session per visitor
         current = gr.State("data")
 
@@ -741,7 +741,8 @@ def build_app() -> gr.Blocks:
 
         # ------------------------------------------------------------- right panel: agents and chat
         with gr.Sidebar(open=True, width=420, position="right", label="Agents", elem_id="fc-right"):
-            ui.shared["chat"] = gr.Chatbot(show_label=False, height=300, buttons=["copy"])
+            ui.shared["chat"] = gr.Chatbot(show_label=False, height=190, buttons=["copy"],
+                                           placeholder="Ask a question about the series, or change a setting.")
             ui.shared["hint"] = gr.HTML()
             msg = gr.Textbox(placeholder="Ask about the series, or tell me what to change…", show_label=False,
                              submit_btn=True)
@@ -756,7 +757,7 @@ def build_app() -> gr.Blocks:
         ui.shared["strip"] = gr.HTML()
         ui.shared["focus"] = gr.Dropdown(label="Series in focus (charts and details)", visible=False)
         built, tab_objs = {}, {}
-        with gr.Tabs(selected="data") as tabs:
+        with gr.Tabs(selected="data", elem_id="fc-tabs") as tabs:
             for i, stage in enumerate(STAGE_ORDER):
                 with gr.Tab(f"{i + 1}. {STAGE_TITLES[stage]}", id=stage) as tab:
                     tab_objs[stage] = tab
@@ -928,5 +929,6 @@ def build_app() -> gr.Blocks:
 
 
 def _agents_note(sess: Session) -> str:
-    return (f"<small>LLM backend in use: `{sess.llm.name}`. It explains results and answers chat questions from "
-            "computed facts; it never makes a decision. Chat changes it proposes are validated by rules.</small>")
+    return (f'<p class="fc-hint">LLM backend in use: <code>{theme.esc(sess.llm.name)}</code>. It explains results and answers '
+            "chat questions from computed facts; it never makes a decision. Chat changes it proposes are validated by "
+            "rules.</p>")
