@@ -18,6 +18,7 @@ MIN_OCCURRENCES_OVERALL = 10  # an overall shift alone (no single holiday stands
 
 class HolidaysAgent(BaseAgent):
     name = "holidays"
+    per_series = True
     title = "Holidays Agent"
     task = "Check whether public or other holidays move the series, and suggest holiday covariates if they do."
     scope = ("Only discuss holidays and their effect. Holiday covariates are suggestions for a forecasting model; "

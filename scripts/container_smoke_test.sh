@@ -46,6 +46,7 @@ expected = {  # sample -> {agent: decision}
     "monthly_passengers.csv": {"frequency": "MS", "missing_values": "complete"},
     "multi_store_long.csv": {"frequency": "D", "missing_values": "complete"},
     "irregular_sensor.csv": {"regularity": "irregular", "resampling": "resampled", "missing_values": "filled"},
+    "store_demand_covariates.csv": {"target": "multiple", "covariates": "found", "frequency": "D"},
 }
 failures = 0
 for name, exp in expected.items():

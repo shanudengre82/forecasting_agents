@@ -16,6 +16,7 @@ from fcagents.tools.missing import (
 
 class MissingValuesAgent(BaseAgent):
     name = "missing_values"
+    per_series = True
     title = "Missing Values Agent"
     task = "Find missing timestamps and values on the fixed-frequency grid and fill them."
     scope = ("Only discuss the missing values and the fill method. Filled values are estimates, not observations; "

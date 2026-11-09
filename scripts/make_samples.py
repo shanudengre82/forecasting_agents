@@ -44,6 +44,34 @@ def holiday_sales() -> pd.DataFrame:
     return pd.DataFrame({"date": idx.strftime("%Y-%m-%d"), "sales": y.round(2)})
 
 
+def store_demand() -> pd.DataFrame:
+    """Three stores, daily, with covariates: temperature (past), promo and price (future, planned and filled in for
+    the next 14 days, where sales are still empty), store_type (static) and a free-text note column.
+
+    Uses its own random generator so adding it leaves the other samples unchanged.
+    """
+    r = np.random.default_rng(7)
+    observed, horizon = 180, 14
+    idx = pd.date_range("2024-01-01", periods=observed + horizon, freq="D")
+    t = np.arange(len(idx))
+    frames = []
+    for store, kind, level in [("north", "mall", 120), ("south", "street", 80), ("east", "mall", 140)]:
+        temperature = 12 + 10 * np.sin(2 * np.pi * (t - 100) / 365) + r.normal(0, 2, len(idx))
+        promo = (r.random(len(idx)) < 0.12).astype(int)
+        price = np.round(9.99 - 1.5 * promo + r.normal(0, 0.05, len(idx)), 2)
+        sales = (level + 12 * np.sin(2 * np.pi * t / 7) + 0.8 * temperature + 10 * promo
+                 + r.normal(0, 4, len(idx)))
+        sales[observed:] = np.nan  # the future: covariates known, sales not yet
+        temp = temperature.round(1)
+        temp[observed:] = np.nan  # weather is only measured, not known ahead
+        frames.append(pd.DataFrame({
+            "date": idx.strftime("%Y-%m-%d"), "store": store, "sales": sales.round(1), "temperature": temp,
+            "promo": promo, "price": price, "store_type": kind,
+            "note": [f"{store}-{i}" for i in range(len(idx))],
+        }))
+    return pd.concat(frames, ignore_index=True)
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     samples = {}
@@ -80,6 +108,7 @@ def main():
          for sid, lvl in [("store_1", 50), ("store_2", 80), ("store_3", 20)]])
 
     samples["daily_sales_holidays.csv"] = holiday_sales()
+    samples["store_demand_covariates.csv"] = store_demand()
 
     for name, df in samples.items():
         df.to_csv(OUT / name, index=False)

@@ -9,6 +9,7 @@ from fcagents.tools.frequency import describe_frequency
 
 class FrequencyAgent(BaseAgent):
     name = "frequency"
+    per_series = True
     title = "Frequency Agent"
     task = "Name the sampling frequency of a regular time series and its likely seasonal periods."
     scope = "Seasonal periods listed are only candidates to test, not confirmed seasonality."

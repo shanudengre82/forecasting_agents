@@ -15,6 +15,7 @@ from fcagents.tools.outliers import (
 
 class OutliersAgent(BaseAgent):
     name = "outliers"
+    per_series = True
     title = "Outliers Agent"
     task = "Flag values that are far from what the trend and seasonal pattern predict."
     scope = ("Only discuss the flagged points. A flagged point is a candidate; only the user decides whether it "
