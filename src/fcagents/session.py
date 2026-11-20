@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import uuid
 
 import pandas as pd
 
 from fcagents.chat import respond
 from fcagents.chat.actions import DEFAULTS, HOLIDAY_TYPE_CHOICES, PAGE_KEYS, Action
 from fcagents.core.multi import series_prompt_facts
+from fcagents.guardrails.pii import redact_pii
 from fcagents.llm.backend import LLMBackend, NullBackend
+from fcagents.observability.langfuse import trace_span
 from fcagents.orchestrator import STAGES, initial_state, run_stage
 from fcagents.tools.covariates import covariate_frame
 from fcagents.tools.holidays import holiday_covariates
@@ -24,7 +27,7 @@ STAGE_PREFS = {"data": ("time_col", "targets", "series_ids", "covariate_override
                "outliers": ("outlier_threshold", "outlier_actions"),
                "missing": ("fill_method",)}
 SOURCE_LABELS = {"rule": "rules", "llm-action": "LLM proposal, validated by rules; confirm with Apply",
-                 "llm-answer": "LLM, from computed facts only"}
+                 "llm-answer": "LLM, from computed facts only", "guardrail": "blocked by guardrails"}
 
 
 def native(key: str, value, ctx: dict):
@@ -60,6 +63,7 @@ def series_result(result, key: str | None):
 class Session:
     df: pd.DataFrame | None = None
     data_key: str = ""
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     llm: LLMBackend = field(default_factory=NullBackend)
     prefs: dict = field(default_factory=default_prefs)
     stages: dict = field(default_factory=dict)  # stage -> (key, results, state)
@@ -103,7 +107,7 @@ class Session:
         if cached and cached[0] == key:
             return cached
         results = []
-        for r, state in run_stage(stage, up_state, self.llm, **stage_prefs):
+        for r, state in run_stage(stage, up_state, self.llm, session_id=self.session_id, **stage_prefs):
             results.append(r)
         self.stages[stage] = (key, results, state)
         return self.stages[stage]
@@ -206,15 +210,24 @@ class Session:
         facts = {r.agent: series_prompt_facts(agents[r.agent], r) for r in results if r.status != "skipped"}
         child = state.child(self.focus(state))
         ctx = self.page_context(stage)
-        reply = respond(text, stage, ctx, child.series if child else None, child.freq if child else None, facts,
-                        self.llm)
+        redacted_text = redact_pii(text).redacted_text
+        with trace_span(
+            f"chat:{stage}",
+            input={"message": redacted_text, "stage": stage},
+            metadata={"llm": self.llm.name, "data_key": self.data_key},
+            session_id=self.session_id,
+            tags=["chat", f"stage:{stage}"],
+        ) as span:
+            reply = respond(text, stage, ctx, child.series if child else None, child.freq if child else None, facts,
+                            self.llm)
+            span.update(output={"source": reply.source, "reply": reply.text, "n_actions": len(reply.actions)})
         if reply.source == "llm-action":
             self.pending[stage] = reply.actions  # applied only after the user confirms
         else:
             self.pending.pop(stage, None)
             self.apply(reply.actions, ctx)
         self.chat.setdefault(stage, []).extend([
-            {"role": "user", "content": text},
+            {"role": "user", "content": redacted_text},
             {"role": "assistant", "content": reply.text, "source": reply.source, "stats": reply.stats}])
 
     def resolve(self, stage: str, accept: bool) -> None:

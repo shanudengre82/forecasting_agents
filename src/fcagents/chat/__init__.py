@@ -10,7 +10,10 @@ from fcagents.chat.actions import PAGE_KEYS, Action, validate
 from fcagents.chat.llm_router import route_with_llm
 from fcagents.chat.parser import parse_command
 from fcagents.chat.qa import llm_answer, series_stats, template_answer
+from fcagents.guardrails.checks import check_input
+from fcagents.guardrails.wrapper import wrap_llm
 from fcagents.llm.backend import LLMBackend, NullBackend
+from fcagents.observability.langfuse import trace_span
 
 HINTS = {
     "data": "Try: “use temp as the target”, “switch to store_2”, “how many points are there?”",
@@ -32,8 +35,20 @@ class ChatReply:
 def respond(text: str, page: str, ctx: dict, series: pd.Series | None, freq: str | None,
             page_facts: dict[str, dict], llm: LLMBackend | None = None) -> ChatReply:
     """``page_facts`` maps agent name → its prompt facts for the agents on this page."""
-    llm = llm or NullBackend()
-    parsed = parse_command(text, page, ctx)
+    verdict = check_input(text, mode="chat_user")
+    if not verdict.allowed:
+        with trace_span("guardrails:chat_input", metadata={"page": page, "flags": verdict.flags}) as span:
+            span.update(
+                output={"allowed": False, "flags": verdict.flags},
+                level="WARNING",
+                status_message=verdict.blocked_reason,
+            )
+            span.score(name="guardrail_blocked", value=1, comment=verdict.blocked_reason)
+        return ChatReply(verdict.text, source="guardrail")
+
+    safe_text = verdict.text
+    llm = wrap_llm(llm or NullBackend())
+    parsed = parse_command(safe_text, page, ctx)
     actions = [a for a in parsed.actions if not validate(page, a, ctx)]
     errors = parsed.errors + [e for a in parsed.actions if (e := validate(page, a, ctx))]
     if actions:
@@ -43,15 +58,19 @@ def respond(text: str, page: str, ctx: dict, series: pd.Series | None, freq: str
         return ChatReply(" ".join(errors))
 
     if not parsed.is_question and llm.available and PAGE_KEYS[page]:
-        if action := route_with_llm(text, page, ctx, llm):  # a small model can misread intent: user confirms
+        if action := route_with_llm(safe_text, page, ctx, llm):  # a small model can misread intent: user confirms
             return ChatReply(f"The LLM suggests: {action.describe()}. Apply it?", [action], "llm-action")
 
     stats = series_stats(series, freq)
     flat = {k: v for facts in page_facts.values() for k, v in facts.items()}
-    if answer := template_answer(text, stats, flat):
+    if answer := template_answer(safe_text, stats, flat):
         return ChatReply(answer)
     if llm.available:
-        return ChatReply(llm_answer(text, stats, page_facts, llm), source="llm-answer")
+        answer = llm_answer(safe_text, stats, page_facts, llm)
+        if answer:
+            return ChatReply(answer, source="llm-answer")
+        return ChatReply("The model could not produce a safe answer for that question. Here is what I know:",
+                         source="guardrail", stats=stats)
     return ChatReply("I can answer questions about points, missing values, frequency, mean, min/max and start/end. "
                      "Turn on the language model for free-form questions. Here is what I know about the series:",
                      stats=stats)

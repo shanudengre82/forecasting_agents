@@ -1,0 +1,17 @@
+define bot refuse unsafe input
+  "I can't process that request because it violates safety or topic guidelines."
+
+define bot refuse unsafe output
+  "The model response was withheld by output guardrails."
+
+define flow fcagents check input
+  $verdict = execute fcagents_input_rail(user_message=$user_message)
+  if not $verdict["allowed"]
+    bot refuse unsafe input
+    stop
+
+define flow fcagents check output
+  $verdict = execute fcagents_output_rail(bot_message=$bot_message)
+  if not $verdict["allowed"]
+    bot refuse unsafe output
+    stop

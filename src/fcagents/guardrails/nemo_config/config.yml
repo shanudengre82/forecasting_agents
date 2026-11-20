@@ -1,0 +1,12 @@
+models:
+  - type: main
+    engine: fcagents_llm
+    model: fcagents-active
+
+rails:
+  input:
+    flows:
+      - fcagents check input
+  output:
+    flows:
+      - fcagents check output

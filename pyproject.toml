@@ -13,6 +13,7 @@ dependencies = [
     "plotly>=5.24",
     "huggingface_hub>=0.30",
     "holidays>=0.60",
+    "langfuse>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -20,6 +21,9 @@ llm = [
     "torch>=2.4",
     "transformers>=4.45",
     "accelerate>=1.0",
+]
+guardrails = [
+    "nemoguardrails>=0.11",
 ]
 
 [dependency-groups]

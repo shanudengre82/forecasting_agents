@@ -1,5 +1,6 @@
 # docker compose up -d                          → full app (LLM) on http://localhost:7860
 # docker compose --profile lite up -d app-lite  → lite app (no PyTorch; your own LLM server) on http://localhost:7861
+# docker compose --profile langfuse up -d       → local self-hosted Langfuse UI on http://localhost:3000
 services:
   app:
     build:
@@ -14,6 +15,11 @@ services:
       LLM_BACKEND: ${LLM_BACKEND:-local}
       LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://host.docker.internal:11434/v1}  # e.g. Ollama on the host
       LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:0.5b}
+      GUARDRAILS_ENABLED: ${GUARDRAILS_ENABLED:-1}
+      NEMO_GUARDRAILS_ENABLED: ${NEMO_GUARDRAILS_ENABLED:-1}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://host.docker.internal:3000}
     extra_hosts:
       - "host.docker.internal:host-gateway"  # lets the container reach a server on the host (Linux)
     volumes:
@@ -31,9 +37,47 @@ services:
     environment:
       LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://host.docker.internal:11434/v1}
       LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-qwen2.5:0.5b}
+      GUARDRAILS_ENABLED: ${GUARDRAILS_ENABLED:-1}
+      NEMO_GUARDRAILS_ENABLED: ${NEMO_GUARDRAILS_ENABLED:-0}
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://host.docker.internal:3000}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
+  langfuse-db:
+    profiles: [langfuse]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${LANGFUSE_DB_USER:-langfuse}
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse}
+      POSTGRES_DB: ${LANGFUSE_DB_NAME:-langfuse}
+    volumes:
+      - langfuse-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LANGFUSE_DB_USER:-langfuse} -d ${LANGFUSE_DB_NAME:-langfuse}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  langfuse:
+    profiles: [langfuse]
+    image: ghcr.io/langfuse/langfuse:2
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "${LANGFUSE_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER:-langfuse}:${LANGFUSE_DB_PASSWORD:-langfuse}@langfuse-db:5432/${LANGFUSE_DB_NAME:-langfuse}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-fcagents-local-dev-secret-change-me}
+      SALT: ${LANGFUSE_SALT:-fcagents-local-dev-salt-change-me}
+      NEXTAUTH_URL: http://localhost:${LANGFUSE_PORT:-3000}
+      TELEMETRY_ENABLED: "false"
+    restart: unless-stopped
+
 volumes:
   hf-cache:
+  langfuse-pgdata:

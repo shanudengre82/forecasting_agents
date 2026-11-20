@@ -18,7 +18,9 @@ import plotly.graph_objects as go
 from fcagents import theme
 from fcagents.catalog import catalog_markdown
 from fcagents.chat import HINTS
+from fcagents.guardrails.wrapper import GuardedLLMBackend, wrap_llm
 from fcagents.llm import backend as llm_backend
+from fcagents.observability.langfuse import is_enabled as langfuse_enabled
 from fcagents.orchestrator import STAGE_TITLES
 from fcagents.session import SOURCE_LABELS, STAGE_ORDER, Session, series_result
 from fcagents.tools.covariates import ROLES as COVARIATE_ROLES
@@ -120,7 +122,7 @@ def configure_llm(sess: Session, use: bool, kind: str, local_model: str, url: st
         except Exception as e:  # missing torch, no network, OOM, bad model id…
             note = f"Could not set up the language model: {e}. Falling back to rule-based summaries."
             llm = llm_backend.NullBackend()
-    sess.llm = llm
+    sess.llm = wrap_llm(llm)
     return llm_status(sess, note)
 
 
@@ -929,6 +931,9 @@ def build_app() -> gr.Blocks:
 
 
 def _agents_note(sess: Session) -> str:
-    return (f'<p class="fc-hint">LLM backend in use: <code>{theme.esc(sess.llm.name)}</code>. It explains results and answers '
-            "chat questions from computed facts; it never makes a decision. Chat changes it proposes are validated by "
-            "rules.</p>")
+    guard_label = sess.llm.engine_label if isinstance(sess.llm, GuardedLLMBackend) else "PII + built-in"
+    lf_label = "active" if langfuse_enabled() else "off"
+    return (f'<p class="fc-hint">LLM backend in use: <code>{theme.esc(sess.llm.name)}</code> · '
+            f'Guardrails: <code>{theme.esc(guard_label)}</code> · Langfuse: <code>{lf_label}</code>. '
+            "It explains results and answers chat questions from computed facts; it never makes a decision. "
+            "Chat changes it proposes are validated by rules.</p>")

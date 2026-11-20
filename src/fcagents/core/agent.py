@@ -8,7 +8,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from fcagents.guardrails.pii import redact_pii
 from fcagents.llm.backend import LLMBackend
+from fcagents.observability.langfuse import trace_span
 
 if TYPE_CHECKING:
     from fcagents.core.state import PipelineState
@@ -90,16 +92,23 @@ class BaseAgent(ABC):
 
     def run(self, state: PipelineState, llm: LLMBackend) -> AgentResult:
         t0 = time.perf_counter()
-        facts = self.run_tools(state)
-        d = self.decide(facts)
-        prompt = explanation = None
-        if llm.available:
-            prompt = self.build_prompt(facts, d)
-            explanation = llm.generate(SYSTEM_PROMPT, prompt)
+        with trace_span(f"agent:{self.name}", metadata={"title": self.title}) as span:
+            facts = self.run_tools(state)
+            d = self.decide(facts)
+            prompt = explanation = None
+            if llm.available:
+                raw_prompt = self.build_prompt(facts, d)
+                prompt = redact_pii(raw_prompt).redacted_text
+                explanation = llm.generate(SYSTEM_PROMPT, prompt) or None
+            elapsed = round(time.perf_counter() - t0, 2)
+            span.update(
+                output={"status": d.status, "decision": d.decision, "confidence": round(d.confidence, 3)},
+                metadata={"elapsed_s": elapsed, "used_llm": bool(explanation)},
+            )
         result = AgentResult(
             agent=self.name, title=self.title, status=d.status, decision=d.decision,
             confidence=round(d.confidence, 3), facts=facts, summary=d.summary, next_step=d.next_step,
-            explanation=explanation, prompt=prompt, elapsed_s=round(time.perf_counter() - t0, 2),
+            explanation=explanation, prompt=prompt, elapsed_s=elapsed,
         )
         state.findings[self.name] = result
         return result

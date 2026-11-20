@@ -18,7 +18,9 @@ from fcagents.agents.time_index_agent import TimeIndexAgent
 from fcagents.core.agent import AgentResult, BaseAgent, skipped
 from fcagents.core.multi import run_per_series
 from fcagents.core.state import PipelineState
+from fcagents.guardrails.wrapper import wrap_llm
 from fcagents.llm.backend import LLMBackend, NullBackend
+from fcagents.observability.langfuse import trace_span
 
 STAGES: dict[str, list[BaseAgent]] = {
     "data": [TimeIndexAgent(), TargetAgent(), CovariatesAgent(), RegularityAgent()],
@@ -47,21 +49,30 @@ def initial_state(df: pd.DataFrame, time_col: str | None = None, targets: tuple[
 
 
 def run_stage(stage: str, state: PipelineState, llm: LLMBackend | None = None,
-              **prefs) -> Iterator[tuple[AgentResult, PipelineState]]:
+              session_id: str | None = None, **prefs) -> Iterator[tuple[AgentResult, PipelineState]]:
     """Run one stage on a fork of ``state`` (the input is left untouched, so a page can re-run its stage)."""
-    llm = llm or NullBackend()
+    llm = wrap_llm(llm or NullBackend())
     state = state.fork(**prefs)
-    for agent in STAGES[stage]:
-        if state.stopped:
-            result = skipped(agent, state.stopped)
-        elif agent.per_series:
-            result = run_per_series(agent, state, llm, _route)
-        elif skip_reason := agent.applies(state):
-            result = skipped(agent, skip_reason)
-        else:
-            result = agent.run(state, llm)
-            state.stopped = _route(agent, result)
-        yield result, state
+    with trace_span(
+        f"stage:{stage}",
+        metadata={"stage": stage, "llm": llm.name, "n_rows": len(state.raw)},
+        session_id=session_id,
+        tags=["pipeline", f"stage:{stage}"],
+    ) as span:
+        statuses: dict[str, str] = {}
+        for agent in STAGES[stage]:
+            if state.stopped:
+                result = skipped(agent, state.stopped)
+            elif agent.per_series:
+                result = run_per_series(agent, state, llm, _route)
+            elif skip_reason := agent.applies(state):
+                result = skipped(agent, skip_reason)
+            else:
+                result = agent.run(state, llm)
+                state.stopped = _route(agent, result)
+            statuses[agent.name] = result.status
+            yield result, state
+        span.update(output={"statuses": statuses, "stopped": bool(state.stopped)})
 
 
 def run_pipeline(
