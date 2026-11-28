@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from fcagents.guardrails.pii import redact_pii
 from fcagents.llm.backend import LLMBackend
-from fcagents.observability.langfuse import trace_span
+from fcagents.observability import trace_span
 
 if TYPE_CHECKING:
     from fcagents.core.state import PipelineState

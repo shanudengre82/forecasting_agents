@@ -10,7 +10,9 @@ PRINCIPLE = ("Deterministic tools compute every fact → rules make every decisi
 STOP, NEXT = "stop", "next"
 # Pipeline flow: (from, to, condition). Mirrors orchestrator routing and each agent's applies().
 EDGES = [
-    ("data", "time_index", ""),
+    ("data", "exploration", ""),
+    ("exploration", "time_index", "clean / findings"),
+    ("exploration", STOP, "empty"),
     ("time_index", "target", "found / ambiguous"),
     ("time_index", STOP, "not_found"),
     ("target", "covariates", "single / multiple series"),
@@ -28,7 +30,7 @@ EDGES = [
 
 
 def _labels() -> dict[str, str]:
-    return {"data": "CSV data", **{a.name: a.title for a in PIPELINE},
+    return {"data": "Imported data (CSV/TSV/JSON/Excel/Parquet)", **{a.name: a.title for a in PIPELINE},
             STOP: "Stop & ask user", NEXT: "Next agents (planned)"}
 
 

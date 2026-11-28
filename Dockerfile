@@ -49,10 +49,10 @@ RUN --mount=type=cache,target=/home/user/.cache/uv,uid=1000 \
 
 FROM base AS full
 RUN --mount=type=cache,target=/home/user/.cache/uv,uid=1000 \
-    uv sync --frozen --no-dev --extra llm --extra guardrails --no-install-project
+    uv sync --frozen --no-dev --extra llm --extra guardrails --extra observability --no-install-project
 COPY --chown=user . .
 RUN --mount=type=cache,target=/home/user/.cache/uv,uid=1000 \
-    uv sync --frozen --no-dev --extra llm --extra guardrails
+    uv sync --frozen --no-dev --extra llm --extra guardrails --extra observability
 # Bake the default model into the image so the first request doesn't wait for a download.
 ARG PRELOAD_MODEL=Qwen/Qwen2.5-0.5B-Instruct
 ENV MODEL_ID=${PRELOAD_MODEL}

@@ -13,9 +13,10 @@ from fcagents.chat.qa import llm_answer, series_stats, template_answer
 from fcagents.guardrails.checks import check_input
 from fcagents.guardrails.wrapper import wrap_llm
 from fcagents.llm.backend import LLMBackend, NullBackend
-from fcagents.observability.langfuse import trace_span
+from fcagents.observability import trace_span
 
 HINTS = {
+    "explore": "Try: “use spearman correlation”, “inspect sales”, “compare temp and demand”",
     "data": "Try: “use temp as the target”, “switch to store_2”, “how many points are there?”",
     "resampling": "Try: “resample to 6 hours with sum”, “daily, max per day”, “what is the mean?”",
     "holidays": "Try: “use Germany”, “only California”, “include unofficial holidays”, “check 3 days around”",

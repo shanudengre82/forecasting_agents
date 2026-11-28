@@ -11,6 +11,10 @@ from fcagents.llm.backend import LLMBackend
 ROUTER_SYSTEM = "You convert a user message into a JSON settings change. Reply with one JSON object and nothing else."
 _JSON = re.compile(r"\{.*?\}", re.S)
 MEANINGS = {
+    "explore_col": "column whose distribution is shown",
+    "rel_x": "first (X-axis) column in the relationship chart",
+    "rel_y": "second (Y-axis) column in the relationship chart",
+    "corr_method": "correlation method (pearson or spearman)",
     "resample_freq": "size of each time bin",
     "resample_agg": "how the values inside one bin are combined",
     "fill_method": "how missing values are filled",

@@ -44,8 +44,8 @@ def test_no_data_asks_for_data():
 
 def test_strip_shows_status_lamps():
     s = _session("hourly_energy.csv")
-    strip = webui.render(s, "data")["strip"]
-    assert "1. Data" in strip and 'aria-label="Checked"' in strip and 'aria-label="Not run yet"' in strip
+    strip = webui.render(s, "explore")["strip"]
+    assert "1. Explore" in strip and 'aria-label="Checked"' in strip and 'aria-label="Not run yet"' in strip
 
 
 def test_card_html_is_escaped():

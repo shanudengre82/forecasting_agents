@@ -89,7 +89,8 @@ re-runs that step and is kept when you switch pages.
 
 ```mermaid
 flowchart LR
-  data["CSV data"]
+  data["Imported data (CSV/TSV/JSON/Excel/Parquet)"]
+  exploration["Data Exploration Agent"]
   time_index["Time Index Agent"]
   target["Target Agent"]
   covariates["Covariates Agent"]
@@ -101,7 +102,9 @@ flowchart LR
   missing_values["Missing Values Agent"]
   stop["Stop & ask user"]
   next["Next agents (planned)"]
-  data --> time_index
+  data --> exploration
+  exploration -->|clean / findings| time_index
+  exploration -->|empty| stop
   time_index -->|found / ambiguous| target
   time_index -->|not_found| stop
   target -->|single / multiple series| covariates
@@ -117,7 +120,27 @@ flowchart LR
   missing_values --> next
 ```
 
-### 1. Time Index Agent
+### 1. Data Exploration Agent
+
+Profiles the imported dataset (CSV, TSV, JSON, Excel or Parquet) before forecasting: audits column types, missingness, duplicate rows, distribution skewness, IQR anomalies, and pairwise relationships between columns.
+
+| Property | Details |
+|---|---|
+| Page | Explore |
+| Runs when | Always (first step after importing a dataset). |
+| Runs on | the whole dataset |
+| Inputs | Imported dataset (CSV, TSV, JSON, Excel or Parquet)<br>Correlation method (Pearson or Spearman) |
+| Outputs | Per-column statistical & quality profile<br>Anomaly summary (duplicates, missing, skew, IQR outliers)<br>Pairwise correlation matrix & strongest feature relationships |
+| User controls | Distribution column picker<br>Correlation method (Pearson / Spearman)<br>Relationship X and Y column pickers |
+| Tools | `tools.explore.load_dataset`<br>`tools.explore.profile_columns`<br>`tools.explore.detect_anomalies`<br>`tools.explore.compute_relationships` |
+
+| Decision | Meaning |
+|---|---|
+| `clean` | Dataset imported cleanly with no major structural anomalies, missingness, or extreme skew. |
+| `findings` | Dataset imported; notable anomalies, missing values, skewed distributions, or strong correlations were found. |
+| `empty` | Dataset has no rows or no columns; import a non-empty file to proceed. |
+
+### 2. Time Index Agent
 
 Finds the column that holds the timestamps and, for long-format data, the column that identifies each series.
 
@@ -137,7 +160,7 @@ Finds the column that holds the timestamps and, for long-format data, the column
 | `ambiguous` | Several plausible time columns; the best one is used, but you should confirm it. |
 | `not_found` | No column parses as dates; the pipeline stops. |
 
-### 2. Target Agent
+### 3. Target Agent
 
 Chooses what to forecast: one value column or several, and in long-format data one series per id (all of them by default). Rows after a series' last observed value are kept apart as the forecast horizon.
 
@@ -158,7 +181,7 @@ Chooses what to forecast: one value column or several, and in long-format data o
 | `capped` | More than 50 series; the 50 longest are used. |
 | `timestamps_only` | No numeric column to forecast; only the timestamps are analysed. |
 
-### 3. Covariates Agent
+### 4. Covariates Agent
 
 Sorts every column that is not the time, id or target into past covariates (known only up to now), future covariates (known in advance: values on future rows, calendar or planned columns such as prices and promotions), static covariates (one value per series) or unused.
 
@@ -177,7 +200,7 @@ Sorts every column that is not the time, id or target into past covariates (know
 | `found` | At least one column can be used as a covariate. |
 | `none` | No other usable column; the model uses the target's own history (plus holiday covariates). |
 
-### 4. Regularity Agent
+### 5. Regularity Agent
 
 Checks whether the timestamps follow a fixed frequency, including calendar frequencies (business days, month/quarter/year starts and ends), and flags duplicates, gaps and unsorted data.
 
@@ -198,7 +221,7 @@ Checks whether the timestamps follow a fixed frequency, including calendar frequ
 | `irregular` | No fixed grid fits; the Resampling agent runs next. |
 | `insufficient_data` | Fewer than 3 distinct timestamps; the pipeline stops. |
 
-### 5. Resampling Agent
+### 6. Resampling Agent
 
 Converts irregularly spaced observations into a fixed-frequency series between 1 hour and 1 week, using your choice of frequency and aggregation. Empty bins are left as missing timestamps for the Missing Values agent.
 
@@ -218,7 +241,7 @@ Converts irregularly spaced observations into a fixed-frequency series between 1
 | `sparse` | Enough points, but over half the bins are empty; a coarser frequency is suggested. |
 | `too_few_points` | Fewer than 30 data points; finer frequencies are suggested and the pipeline stops. |
 
-### 6. Frequency Agent
+### 7. Frequency Agent
 
 Names the sampling frequency in plain words and as a pandas alias, lists missing timestamps and gap runs, and proposes the seasonal periods later agents should test.
 
@@ -236,7 +259,7 @@ Names the sampling frequency in plain words and as a pandas alias, lists missing
 |---|---|
 | `<alias>` | The pandas frequency alias, e.g. h, D, B, W-SUN, MS, QS-JAN. The status is a warning if timestamps are missing. |
 
-### 7. Holidays Agent
+### 8. Holidays Agent
 
 Compares each holiday, and the days around it, with a same-weekday baseline to find out whether holidays move the series. If they do, it suggests holiday covariates for the forecasting model and tells the Outliers agent to leave those days alone.
 
@@ -258,7 +281,7 @@ Compares each holiday, and the days around it, with a same-weekday baseline to f
 | `too_few_holidays` | Fewer than 3 holidays fall inside the data, too few to judge. |
 | `not_applicable` | The frequency is coarser than a day (weeks, months), so single days can't be seen. |
 
-### 8. Outliers Agent
+### 9. Outliers Agent
 
 Compares every value with what the trend and seasonal pattern predict and flags the ones that are far off. You decide per point: keep it, remove it (the Missing Values agent then fills the gap) or replace it with another value. Nothing changes until you choose.
 
@@ -278,7 +301,7 @@ Compares every value with what the trend and seasonal pattern predict and flags 
 | `flagged` | Some values look like outliers and you haven't decided about all of them yet; they are kept until you do. |
 | `handled` | You decided about every flagged point; your choices are applied. |
 
-### 9. Missing Values Agent
+### 10. Missing Values Agent
 
 Puts the series on its complete fixed-frequency grid, counts missing timestamps and empty values, and fills them with your chosen method or a rule-based recommendation.
 

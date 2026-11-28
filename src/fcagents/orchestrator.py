@@ -7,6 +7,7 @@ from collections.abc import Iterator
 import pandas as pd
 
 from fcagents.agents.covariates_agent import CovariatesAgent
+from fcagents.agents.exploration_agent import DataExplorationAgent
 from fcagents.agents.frequency_agent import FrequencyAgent
 from fcagents.agents.holidays_agent import HolidaysAgent
 from fcagents.agents.missing_values_agent import MissingValuesAgent
@@ -20,17 +21,18 @@ from fcagents.core.multi import run_per_series
 from fcagents.core.state import PipelineState
 from fcagents.guardrails.wrapper import wrap_llm
 from fcagents.llm.backend import LLMBackend, NullBackend
-from fcagents.observability.langfuse import trace_span
+from fcagents.observability import trace_span
 
 STAGES: dict[str, list[BaseAgent]] = {
+    "explore": [DataExplorationAgent()],
     "data": [TimeIndexAgent(), TargetAgent(), CovariatesAgent(), RegularityAgent()],
     "resampling": [ResamplingAgent(), FrequencyAgent()],
     "holidays": [HolidaysAgent()],
     "outliers": [OutliersAgent()],
     "missing": [MissingValuesAgent()],
 }
-STAGE_TITLES = {"data": "Data", "resampling": "Resampling", "holidays": "Holidays", "outliers": "Outliers",
-                "missing": "Missing values"}
+STAGE_TITLES = {"explore": "Explore", "data": "Data", "resampling": "Resampling", "holidays": "Holidays",
+                "outliers": "Outliers", "missing": "Missing values"}
 PIPELINE: list[BaseAgent] = [a for agents in STAGES.values() for a in agents]
 
 

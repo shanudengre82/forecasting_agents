@@ -13,7 +13,8 @@ dependencies = [
     "plotly>=5.24",
     "huggingface_hub>=0.30",
     "holidays>=0.60",
-    "langfuse>=3.0",
+    "openpyxl>=3.1",
+    "pyarrow>=17.0",
 ]
 
 [project.optional-dependencies]
@@ -24,6 +25,9 @@ llm = [
 ]
 guardrails = [
     "nemoguardrails>=0.11",
+]
+observability = [
+    "langfuse>=3.0",
 ]
 
 [dependency-groups]

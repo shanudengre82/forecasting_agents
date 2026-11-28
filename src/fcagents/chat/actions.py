@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from fcagents.tools.explore import CORR_METHODS
 from fcagents.tools.holidays import DEFAULT_COUNTRY, DEFAULT_WINDOW, MAX_WINDOW, countries
 from fcagents.tools.missing import FILL_METHODS
 from fcagents.tools.outliers import DEFAULT_THRESHOLD, THRESHOLDS
 from fcagents.tools.resample import AGGREGATIONS, FREQ_OPTIONS
 
 PAGE_KEYS = {
+    "explore": ("explore_col", "rel_x", "rel_y", "corr_method"),
     "data": ("time_col", "target_col", "targets", "series_id", "series_scope"),
     "resampling": ("resample_freq", "resample_agg"),
     "holidays": ("holiday_country", "holiday_subdiv", "holiday_types", "holiday_window"),
@@ -17,11 +19,14 @@ PAGE_KEYS = {
     "missing": ("fill_method",),
 }
 # Chat values are strings; ui._native converts them to the stored types (tuples, ints, floats).
-DEFAULTS = {"time_col": None, "target_col": None, "targets": None, "series_id": None, "series_scope": None,
+DEFAULTS = {"explore_col": None, "rel_x": None, "rel_y": None, "corr_method": "pearson",
+            "time_col": None, "target_col": None, "targets": None, "series_id": None, "series_scope": None,
             "resample_freq": "auto", "resample_agg": "mean", "fill_method": "auto",
             "holiday_country": DEFAULT_COUNTRY, "holiday_subdiv": None, "holiday_types": "official",
             "holiday_window": str(DEFAULT_WINDOW), "outlier_threshold": str(DEFAULT_THRESHOLD), "outlier_bulk": None}
-KEY_LABELS = {"time_col": "time column", "target_col": "target column", "targets": "target columns",
+KEY_LABELS = {"explore_col": "distribution column", "rel_x": "relationship X column",
+              "rel_y": "relationship Y column", "corr_method": "correlation method",
+              "time_col": "time column", "target_col": "target column", "targets": "target columns",
               "series_id": "series in focus", "series_scope": "series to forecast",
               "resample_freq": "frequency", "resample_agg": "aggregation", "fill_method": "fill method",
               "holiday_country": "holiday country", "holiday_subdiv": "state / region",
@@ -49,6 +54,10 @@ class Action:
 def allowed_values(key: str, ctx: dict) -> list[str]:
     """``ctx`` carries what the data offers: time_cols, target_cols, series_ids."""
     return {
+        "explore_col": list(ctx.get("all_cols", [])),
+        "rel_x": list(ctx.get("all_cols", [])),
+        "rel_y": list(ctx.get("all_cols", [])),
+        "corr_method": list(CORR_METHODS),
         "resample_freq": ["auto", *FREQ_OPTIONS],
         "resample_agg": list(AGGREGATIONS),
         "fill_method": ["auto", *FILL_METHODS],

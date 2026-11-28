@@ -15,15 +15,15 @@ import gradio as gr
 import pandas as pd
 import plotly.graph_objects as go
 
-from fcagents import theme
+from fcagents import observability, theme
 from fcagents.catalog import catalog_markdown
 from fcagents.chat import HINTS
 from fcagents.guardrails.wrapper import GuardedLLMBackend, wrap_llm
 from fcagents.llm import backend as llm_backend
-from fcagents.observability.langfuse import is_enabled as langfuse_enabled
 from fcagents.orchestrator import STAGE_TITLES
 from fcagents.session import SOURCE_LABELS, STAGE_ORDER, Session, series_result
 from fcagents.tools.covariates import ROLES as COVARIATE_ROLES
+from fcagents.tools.explore import CORR_METHODS, SUPPORTED_EXTENSIONS, load_dataset
 from fcagents.tools.holidays import HOLIDAY_TYPES, MAX_WINDOW, countries, subdivisions, unofficial_categories
 from fcagents.tools.missing import FILL_METHODS
 from fcagents.tools.outliers import ACTIONS, THRESHOLDS, bulk_actions
@@ -35,6 +35,8 @@ TOKEN_URL = "https://huggingface.co/settings/tokens"
 BACKEND_LABELS = {"zerogpu": "ZeroGPU model (free, on this Space)", "local": "Local model (in-app, CPU)",
                   "server": "Local LLM server (Ollama, vLLM, LM Studio)", "api": "Hugging Face API (your token)"}
 INTROS = {
+    "explore": "Import your dataset (CSV, TSV, JSON, Excel or Parquet) and inspect its structure, anomalies, "
+               "column distributions, and relationships before configuring the forecasting pipeline.",
     "data": "Which column is time, what to forecast, and is the spacing fixed?",
     "resampling": "Irregular timestamps are binned onto a fixed grid. Regular series pass through unless you pick "
                   "a frequency, e.g. to aggregate hourly data to daily.",
@@ -44,7 +46,7 @@ INTROS = {
                 "each one; nothing changes until you do.",
     "missing": "Every timestamp on the grid gets a value. Filled values are estimates and are marked in the chart.",
 }
-NO_DATA = '<div class="fc-card">Pick a sample dataset or upload a CSV in the left panel.</div>'
+NO_DATA = '<div class="fc-card">Pick a sample dataset or upload a data file (CSV, TSV, JSON, Excel, Parquet) in the left panel.</div>'
 OUTLIER_LABELS = {"undecided": "Undecided", **ACTIONS}
 
 # --------------------------------------------------------------------------- data and LLM
@@ -60,12 +62,13 @@ def _read_sample(name: str) -> pd.DataFrame:
 
 
 def load_data(sess: Session, mode: str, sample: str | None, upload: str | None) -> None:
-    if mode == "Upload CSV":
+    if mode in ("Upload file", "Upload CSV"):
         if not upload:
             sess.set_data(None, "")
             return
         raw = Path(upload).read_bytes()
-        sess.set_data(pd.read_csv(upload), f"upload:{Path(upload).name}:{hashlib.sha256(raw).hexdigest()[:16]}")
+        df, _meta = load_dataset(upload)
+        sess.set_data(df, f"upload:{Path(upload).name}:{hashlib.sha256(raw).hexdigest()[:16]}")
     elif sample:
         sess.set_data(_read_sample(sample).copy(), sample)
 
@@ -339,6 +342,124 @@ def covariate_overrides_from_view(view: pd.DataFrame) -> tuple[tuple[tuple[str, 
     return tuple(out), problems
 
 
+def distribution_figure(df: pd.DataFrame, col: str | None) -> go.Figure | None:
+    """Histogram for numeric columns (with IQR anomaly bounds), or top-15 bar chart for categoricals."""
+    if df is None or not col or col not in df.columns:
+        return None
+    s = df[col].dropna()
+    if s.empty:
+        return None
+    pal = theme.palette()
+    fig = go.Figure()
+    if pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s):
+        fig.add_trace(go.Histogram(x=s, nbinsx=min(40, max(10, int(s.nunique()))), name=col,
+                                   marker_color=pal["trace"], opacity=0.85))
+        if len(s) >= 4:
+            q1, q3 = float(s.quantile(0.25)), float(s.quantile(0.75))
+            iqr = q3 - q1
+            if iqr > 0:
+                lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+                if float(s.min()) < lo:
+                    fig.add_vline(x=lo, line=dict(color=pal["warn"], dash="dot", width=1.5),
+                                  annotation_text="IQR low", annotation_position="top left")
+                if float(s.max()) > hi:
+                    fig.add_vline(x=hi, line=dict(color=pal["warn"], dash="dot", width=1.5),
+                                  annotation_text="IQR high", annotation_position="top right")
+        fig.update_xaxes(title_text=col)
+        fig.update_yaxes(title_text="Count")
+    else:
+        counts = s.astype(str).value_counts().head(15)
+        fig.add_trace(go.Bar(x=counts.index.tolist(), y=counts.values.tolist(), marker_color=pal["trace"]))
+        fig.update_xaxes(title_text=col)
+        fig.update_yaxes(title_text="Count")
+    fig.update_layout(**theme.plotly_layout(height=320), showlegend=False)
+    fig.update_layout(title=dict(text=f"Distribution of {col}", x=0, font=dict(size=14)), margin=dict(t=56))
+    return fig
+
+
+def correlation_figure(corr: pd.DataFrame | None, method: str) -> go.Figure | None:
+    """Annotated correlation heatmap across numeric columns."""
+    if corr is None or corr.empty or len(corr) < 2:
+        return None
+    z = corr.round(2).to_numpy()
+    cols = [str(c) for c in corr.columns]
+    fig = go.Figure(go.Heatmap(
+        z=z, x=cols, y=cols, zmin=-1, zmax=1, colorscale="RdBu", reversescale=True,
+        text=z, texttemplate="%{text:.2f}", hovertemplate="%{x} vs %{y}: %{z:.3f}<extra></extra>",
+    ))
+    fig.update_layout(**theme.plotly_layout(height=340))
+    fig.update_layout(title=dict(text=f"Correlation matrix ({CORR_METHODS.get(method, method)})", x=0, font=dict(size=14)),
+                      margin=dict(t=56))
+    return fig
+
+
+def relationship_figure(df: pd.DataFrame, col_x: str | None, col_y: str | None) -> go.Figure | None:
+    """Pairwise relationship: scatter (num×num), grouped box (cat×num), or contingency heatmap (cat×cat)."""
+    if df is None or not col_x or not col_y or col_x not in df.columns or col_y not in df.columns:
+        return None
+    sub = df[[col_x, col_y]].dropna() if col_x != col_y else df[[col_x]].dropna()
+    if sub.empty:
+        return None
+    if len(sub) > 5000:
+        sub = sub.sample(5000, random_state=0)
+    pal = theme.palette()
+    x_num = pd.api.types.is_numeric_dtype(df[col_x]) and not pd.api.types.is_bool_dtype(df[col_x])
+    y_num = pd.api.types.is_numeric_dtype(df[col_y]) and not pd.api.types.is_bool_dtype(df[col_y])
+    fig = go.Figure()
+    if col_x == col_y:
+        return distribution_figure(df, col_x)
+    if x_num and y_num:
+        fig.add_trace(go.Scatter(x=sub[col_x], y=sub[col_y], mode="markers",
+                                 marker=dict(color=pal["trace"], size=6, opacity=0.65)))
+        fig.update_xaxes(title_text=col_x)
+        fig.update_yaxes(title_text=col_y)
+    elif x_num != y_num:
+        cat_col, num_col = (col_x, col_y) if not x_num else (col_y, col_x)
+        top_cats = sub[cat_col].astype(str).value_counts().head(12).index.tolist()
+        filtered = sub[sub[cat_col].astype(str).isin(top_cats)]
+        for cat in top_cats:
+            vals = filtered.loc[filtered[cat_col].astype(str) == cat, num_col]
+            fig.add_trace(go.Box(y=vals, name=str(cat), marker_color=pal["trace"]))
+        fig.update_xaxes(title_text=cat_col)
+        fig.update_yaxes(title_text=num_col)
+    else:
+        ct = pd.crosstab(sub[col_x].astype(str), sub[col_y].astype(str))
+        ct = ct.iloc[:12, :12]
+        fig.add_trace(go.Heatmap(z=ct.to_numpy(), x=ct.columns.tolist(), y=ct.index.tolist(), colorscale="Blues"))
+        fig.update_xaxes(title_text=col_y)
+        fig.update_yaxes(title_text=col_x)
+    fig.update_layout(**theme.plotly_layout(height=340), showlegend=False)
+    fig.update_layout(title=dict(text=f"Relationship: {col_x} vs {col_y}", x=0, font=dict(size=14)), margin=dict(t=56))
+    return fig
+
+
+def view_explore(sess: Session, results, state) -> dict:
+    df = sess.df
+    all_cols = [str(c) for c in df.columns] if df is not None else []
+    num_cols = [c for c in all_cols if pd.api.types.is_numeric_dtype(df[c]) and not pd.api.types.is_bool_dtype(df[c])] if df is not None else []
+    p = sess.prefs
+    r = next((res for res in results if res.agent == "exploration"), None)
+    profile = r.extras.get("profile_table") if r else None
+    corr = r.extras.get("corr_matrix") if r else None
+
+    dist_col = _first(all_cols, p.get("explore_col") or (num_cols[0] if num_cols else None))
+    default_x = num_cols[0] if num_cols else (all_cols[0] if all_cols else None)
+    default_y = num_cols[1] if len(num_cols) > 1 else (all_cols[1] if len(all_cols) > 1 else default_x)
+    rel_x = _first(all_cols, p.get("rel_x") or default_x)
+    rel_y = _first(all_cols, p.get("rel_y") or default_y)
+
+    return {
+        "explore_col": gr.update(choices=all_cols, value=dist_col, visible=bool(all_cols)),
+        "corr_method": p.get("corr_method", "pearson"),
+        "rel_x": gr.update(choices=all_cols, value=rel_x, visible=len(all_cols) >= 2),
+        "rel_y": gr.update(choices=all_cols, value=rel_y, visible=len(all_cols) >= 2),
+        "profile": gr.update(value=profile, visible=profile is not None and not profile.empty),
+        "plot": distribution_figure(df, dist_col),
+        "corr_plot": correlation_figure(corr, p.get("corr_method", "pearson")),
+        "rel_plot": relationship_figure(df, rel_x, rel_y) if len(all_cols) >= 2 else None,
+    }
+
+
 def view_data(sess: Session, results, state) -> dict:
     ctx = sess.data_context()
     p = sess.prefs
@@ -554,10 +675,11 @@ def view_missing(sess: Session, results, state) -> dict:
     return out
 
 
-VIEWS = {"data": view_data, "resampling": view_resampling, "holidays": view_holidays, "outliers": view_outliers,
-         "missing": view_missing}
+VIEWS = {"explore": view_explore, "data": view_data, "resampling": view_resampling, "holidays": view_holidays,
+         "outliers": view_outliers, "missing": view_missing}
 # Centre components each step's view fills.
 VIEW_KEYS = {
+    "explore": ("explore_col", "corr_method", "rel_x", "rel_y", "profile", "plot", "corr_plot", "rel_plot"),
     "data": ("time_col", "targets", "series_ids", "covariates", "head", "overview", "plot"),
     "resampling": ("resample_freq", "resample_agg", "overview", "options", "plot"),
     "holidays": ("holiday_country", "holiday_subdiv", "holiday_window", "type_official", "type_unofficial",
@@ -647,10 +769,11 @@ def _llm_sidebar() -> dict:
     c["status"] = gr.Markdown()
     c["agents_note"] = gr.Markdown()
     gr.Markdown("---\n## Data")
-    c["mode"] = gr.Radio(["Sample dataset", "Upload CSV"], value="Sample dataset", show_label=False)
+    c["mode"] = gr.Radio(["Sample dataset", "Upload file"], value="Sample dataset", show_label=False)
     samples = sample_names()
     c["sample"] = gr.Dropdown(samples, value=samples[0] if samples else None, label="Sample")
-    c["upload"] = gr.File(label="CSV file", file_types=[".csv"], type="filepath", visible=False)
+    c["upload"] = gr.File(label="Data file (CSV, TSV, JSON, Excel, Parquet)",
+                          file_types=list(SUPPORTED_EXTENSIONS), type="filepath", visible=False)
     gr.Markdown('<p class="fc-hint">Tools compute the facts, rules make the decisions, and the language model '
                 "explains them.</p>")
     return c
@@ -659,7 +782,18 @@ def _llm_sidebar() -> dict:
 def _tab_body(stage: str, names: dict) -> dict:
     """The centre content of one step tab."""
     c: dict[str, gr.components.Component] = {}
-    if stage == "data":
+    if stage == "explore":
+        c["profile"] = gr.Dataframe(label="Column profile & anomalies", interactive=False, visible=False, max_height=320)
+        with gr.Row():
+            c["explore_col"] = gr.Dropdown(label="Distribution column", visible=False)
+            c["corr_method"] = gr.Dropdown([(v, k) for k, v in CORR_METHODS.items()], label="Correlation method")
+        c["plot"] = gr.Plot(show_label=False)
+        c["corr_plot"] = gr.Plot(show_label=False)
+        with gr.Row():
+            c["rel_x"] = gr.Dropdown(label="Relationship X column", visible=False)
+            c["rel_y"] = gr.Dropdown(label="Relationship Y column", visible=False)
+        c["rel_plot"] = gr.Plot(show_label=False)
+    elif stage == "data":
         with gr.Row():
             c["time_col"] = gr.Dropdown(label="Time column", visible=False)
             c["targets"] = gr.Dropdown(label="Target columns (what to forecast)", multiselect=True, visible=False)
@@ -735,7 +869,7 @@ def build_app() -> gr.Blocks:
     names = countries()
     with gr.Blocks(title="Forecasting Agents", fill_width=True) as demo:
         sess = gr.State(lambda: Session())  # a factory: one fresh Session per visitor
-        current = gr.State("data")
+        current = gr.State(STAGE_ORDER[0])
 
         # ------------------------------------------------------------- left panel: language model and data
         with gr.Sidebar(open=True, width=320, position="left", elem_id="fc-left"):
@@ -759,7 +893,7 @@ def build_app() -> gr.Blocks:
         ui.shared["strip"] = gr.HTML()
         ui.shared["focus"] = gr.Dropdown(label="Series in focus (charts and details)", visible=False)
         built, tab_objs = {}, {}
-        with gr.Tabs(selected="data", elem_id="fc-tabs") as tabs:
+        with gr.Tabs(selected=STAGE_ORDER[0], elem_id="fc-tabs") as tabs:
             for i, stage in enumerate(STAGE_ORDER):
                 with gr.Tab(f"{i + 1}. {STAGE_TITLES[stage]}", id=stage) as tab:
                     tab_objs[stage] = tab
@@ -787,10 +921,10 @@ def build_app() -> gr.Blocks:
         all_outputs = ui.all_outputs() + [agents_note]
 
         def refresh_current(s: Session, cur: str):
-            return ui.updates(cur if cur in ui.tabs else "data", s) | {agents_note: _agents_note(s)}
+            return ui.updates(cur if cur in ui.tabs else STAGE_ORDER[0], s) | {agents_note: _agents_note(s)}
 
         def show_current(s: Session, cur: str):
-            return ui.updates(cur if cur in ui.tabs else "data", s)
+            return ui.updates(cur if cur in ui.tabs else STAGE_ORDER[0], s)
 
         llm_inputs = [sess, side["use_llm"], side["kind"], side["local_model"], side["server_url"],
                       side["server_model"], side["api_model"], side["provider"], side["token"]]
@@ -821,16 +955,20 @@ def build_app() -> gr.Blocks:
         data_inputs = [sess, side["mode"], side["sample"], side["upload"]]
 
         def on_data(s, m, smp, up):
-            load_data(s, m, smp, up)
+            try:
+                load_data(s, m, smp, up)
+            except Exception as e:
+                gr.Warning(f"Could not import file: {e}")
+                s.set_data(None, "")
 
-        side["mode"].input(lambda m: (gr.update(visible=m == "Sample dataset"), gr.update(visible=m == "Upload CSV")),
+        side["mode"].input(lambda m: (gr.update(visible=m == "Sample dataset"), gr.update(visible=m != "Sample dataset")),
                            side["mode"], [side["sample"], side["upload"]]).then(on_data, data_inputs).then(
             refresh_current, *refresh)
         side["sample"].input(on_data, data_inputs).then(refresh_current, *refresh)
         side["upload"].change(on_data, data_inputs).then(refresh_current, *refresh)
 
         demo.load(on_kind, [side["kind"], side["server_url"]], kind_outputs).then(
-            on_llm, llm_inputs, side["status"]).then(on_data, data_inputs).then(const("data"), None, current).then(
+            on_llm, llm_inputs, side["status"]).then(on_data, data_inputs).then(const(STAGE_ORDER[0]), None, current).then(
             refresh_current, *refresh)
 
         # shared: focus picker and the right panel's chat
@@ -874,7 +1012,12 @@ def build_app() -> gr.Blocks:
                     s.prefs[key] = convert(v)
                 return fn
 
-            if stage == "data":
+            if stage == "explore":
+                bind(c["explore_col"], pref("explore_col"))
+                bind(c["corr_method"], pref("corr_method"))
+                bind(c["rel_x"], pref("rel_x"))
+                bind(c["rel_y"], pref("rel_y"))
+            elif stage == "data":
                 bind(c["time_col"], pref("time_col"))
                 bind(c["targets"], pref("targets", lambda v: tuple(v or ())))
 
@@ -932,8 +1075,16 @@ def build_app() -> gr.Blocks:
 
 def _agents_note(sess: Session) -> str:
     guard_label = sess.llm.engine_label if isinstance(sess.llm, GuardedLLMBackend) else "PII + built-in"
-    lf_label = "active" if langfuse_enabled() else "off"
+    tracing_html = ""
+    if observability.is_enabled():
+        name = theme.esc(observability.tracer_name())
+        url = observability.dashboard_url()
+        if url and url.startswith(("http://", "https://")):
+            tracing_html = (f' · Tracing: <a href="{theme.esc(url)}" target="_blank" '
+                            f'rel="noopener noreferrer"><code>{name}</code></a>')
+        else:
+            tracing_html = f" · Tracing: <code>{name}</code>"
     return (f'<p class="fc-hint">LLM backend in use: <code>{theme.esc(sess.llm.name)}</code> · '
-            f'Guardrails: <code>{theme.esc(guard_label)}</code> · Langfuse: <code>{lf_label}</code>. '
+            f'Guardrails: <code>{theme.esc(guard_label)}</code>{tracing_html}. '
             "It explains results and answers chat questions from computed facts; it never makes a decision. "
             "Chat changes it proposes are validated by rules.</p>")

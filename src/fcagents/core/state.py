@@ -31,6 +31,7 @@ class PipelineState:
     freq: str | None = None  # child: fixed frequency of ``series`` once known (detected or resampled)
     horizon: pd.DatetimeIndex | None = None  # child: future timestamps (rows after the last observed target)
     # user preferences, set from the app's controls or the chat
+    corr_method: str = "pearson"  # exploration correlation method: pearson | spearman
     targets: tuple[str, ...] = ()  # value columns to forecast; () = let the Target agent choose
     series_ids: tuple | None = None  # long format: series to forecast; None = all
     covariate_overrides: tuple[tuple[str, str], ...] = ()  # (column, past | future | static | ignore)

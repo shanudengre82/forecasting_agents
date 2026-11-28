@@ -19,7 +19,7 @@ services:
       NEMO_GUARDRAILS_ENABLED: ${NEMO_GUARDRAILS_ENABLED:-1}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://host.docker.internal:3000}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"  # lets the container reach a server on the host (Linux)
     volumes:
@@ -41,7 +41,7 @@ services:
       NEMO_GUARDRAILS_ENABLED: ${NEMO_GUARDRAILS_ENABLED:-0}
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      LANGFUSE_HOST: ${LANGFUSE_HOST:-http://host.docker.internal:3000}
+      LANGFUSE_HOST: ${LANGFUSE_HOST:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

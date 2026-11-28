@@ -1,4 +1,4 @@
-"""LLMBackend wrapper combining PII redaction, deterministic + NeMo guardrails, and Langfuse tracing."""
+"""LLMBackend wrapper combining PII redaction, deterministic + NeMo guardrails, and pluggable tracing."""
 
 from __future__ import annotations
 
@@ -8,11 +8,11 @@ from typing import Any
 from fcagents.guardrails.checks import GuardrailConfig, GuardrailMode, GuardrailVerdict
 from fcagents.guardrails.nemo import NemoGuardrailsRunner
 from fcagents.llm.backend import LLMBackend
-from fcagents.observability.langfuse import trace_generation, trace_span
+from fcagents.observability import trace_generation, trace_span
 
 
 class GuardedLLMBackend:
-    """Wraps any ``LLMBackend`` with input/output PII redaction, guardrails (built-in + NeMo), and Langfuse traces."""
+    """Wraps any ``LLMBackend`` with input/output PII redaction, guardrails (built-in + NeMo), and tracing."""
 
     def __init__(self, inner: LLMBackend, config: GuardrailConfig | None = None):
         self.inner = inner

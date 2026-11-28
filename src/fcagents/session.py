@@ -12,7 +12,7 @@ from fcagents.chat.actions import DEFAULTS, HOLIDAY_TYPE_CHOICES, PAGE_KEYS, Act
 from fcagents.core.multi import series_prompt_facts
 from fcagents.guardrails.pii import redact_pii
 from fcagents.llm.backend import LLMBackend, NullBackend
-from fcagents.observability.langfuse import trace_span
+from fcagents.observability import trace_span
 from fcagents.orchestrator import STAGES, initial_state, run_stage
 from fcagents.tools.covariates import covariate_frame
 from fcagents.tools.holidays import holiday_covariates
@@ -21,7 +21,8 @@ from fcagents.tools.time_index import detect_time_column
 
 STAGE_ORDER = list(STAGES)
 # Settings each stage's agents read (the chat's page keys are translated by Session.apply).
-STAGE_PREFS = {"data": ("time_col", "targets", "series_ids", "covariate_overrides"),
+STAGE_PREFS = {"explore": ("corr_method",),
+               "data": ("time_col", "targets", "series_ids", "covariate_overrides"),
                "resampling": ("resample_freq", "resample_agg"),
                "holidays": ("holiday_country", "holiday_subdiv", "holiday_types", "holiday_window"),
                "outliers": ("outlier_threshold", "outlier_actions"),
@@ -188,6 +189,8 @@ class Session:
 
     def page_context(self, stage: str) -> dict:
         ctx = self.data_context()
+        if self.df is not None:
+            ctx = ctx | {"all_cols": [str(c) for c in self.df.columns]}
         if stage == "data" and self.df is not None:
             entry = self.stages.get("data")
             ctx = ctx | {"targets": list(self.prefs["targets"]) or (

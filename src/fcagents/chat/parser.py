@@ -16,7 +16,8 @@ QUESTION_START = re.compile(
     r"summari[sz]e|tell|list|show)\b", re.I)
 COMMAND_VERB = re.compile(
     r"\b(resample|aggregate|agg|convert|switch|change|set|use|fill|impute|interpolate|make|group|bin|try|apply|"
-    r"pick|choose|select|reset|undo|keep|remove|delete|drop|replace|include|exclude|add|fix|check|only|be)\b", re.I)
+    r"pick|choose|select|reset|undo|keep|remove|delete|drop|replace|include|exclude|add|fix|check|only|be|"
+    r"explore|inspect|compare|correlate|plot)\b", re.I)
 POLITE = re.compile(r"^(can|could|would|will) you (please )?", re.I)
 
 _SPAN_TO_ALIAS = {freq_span(a): a for a in FREQ_OPTIONS}
@@ -203,6 +204,26 @@ def _parse_outliers(text: str) -> tuple[list[Action], list[str]]:
     return actions, errors
 
 
+def _parse_explore(text: str, ctx: dict) -> list[Action]:
+    actions: list[Action] = []
+    if re.search(r"\bspearman\b|\brank\b|\bmonotonic\b", text, re.I):
+        actions.append(Action("corr_method", "spearman"))
+    elif re.search(r"\bpearson\b|\blinear\b", text, re.I):
+        actions.append(Action("corr_method", "pearson"))
+
+    all_cols = list(ctx.get("all_cols", []))
+    mentioned = [(m.start(), col) for col in all_cols
+                 if (m := re.search(rf"(?<![\w]){re.escape(str(col))}(?![\w])", text, re.I))]
+    mentioned.sort()
+    cols = [col for _, col in mentioned]
+    if len(cols) >= 2:
+        actions.append(Action("rel_x", cols[0]))
+        actions.append(Action("rel_y", cols[1]))
+    elif len(cols) == 1:
+        actions.append(Action("explore_col", cols[0]))
+    return list({a.key: a for a in actions}.values())
+
+
 def parse_command(text: str, page: str, ctx: dict | None = None) -> ParseResult:
     ctx = ctx or {}
     if is_question(text):
@@ -211,7 +232,9 @@ def parse_command(text: str, page: str, ctx: dict | None = None) -> ParseResult:
         return ParseResult([Action(k, DEFAULTS[k]) for k in PAGE_KEYS[page]])
 
     res = ParseResult()
-    if page == "data":
+    if page == "explore":
+        res.actions = _parse_explore(text, ctx)
+    elif page == "data":
         res.actions = _parse_data(text, ctx)
     elif page == "resampling":
         alias, err, rest = parse_frequency(text)
